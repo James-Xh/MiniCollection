@@ -8,7 +8,7 @@ set(CMAKE_INCLUDE_CURRENT_DIR ON)
 find_package(Qt5 REQUIRED COMPONENTS Core Gui Widgets Network Sql)
 
 # libmseed（miniSEED3 打包/解析）
-set(MSEED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../thirdpartyLib/mseed")
+set(MSEED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/mseed")
 if(WIN32)
     if(CMAKE_SIZEOF_VOID_P EQUAL 8)
         set(MSEED_LIB "${MSEED_DIR}/libs/libmseed.lib")
