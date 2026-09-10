@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.13)
 project(MiniCollection VERSION 1.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 14)
@@ -59,6 +59,10 @@ target_link_libraries(MiniCollection PRIVATE
 # Linux：libmseed.a 依赖 libm 的数学函数
 if(UNIX AND NOT APPLE)
     target_link_libraries(MiniCollection PRIVATE m)
+    # 预编译的 libmseed.a 未加 -fPIC（位置相关），而新版 GCC 默认生成 PIE 可执行文件，
+    # 链接时报 "relocation R_X86_64_32 ... recompile with -fPIE"。
+    # 关闭 PIE 即可正常链接。
+    target_link_options(MiniCollection PRIVATE -no-pie)
 endif()
 
 if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8)
