@@ -7,6 +7,16 @@ set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
 find_package(Qt5 REQUIRED COMPONENTS Core Gui Widgets Network Sql)
 
+if(CMAKE_CROSSCOMPILING AND QT_HOST_MOC)
+    set_target_properties(Qt5::moc PROPERTIES
+        IMPORTED_LOCATION "${QT_HOST_MOC}"
+        IMPORTED_LOCATION_RELEASE "${QT_HOST_MOC}"
+        IMPORTED_LOCATION_DEBUG "${QT_HOST_MOC}"
+        IMPORTED_LOCATION_RELWITHDEBINFO "${QT_HOST_MOC}"
+        IMPORTED_LOCATION_MINSIZEREL "${QT_HOST_MOC}"
+    )
+endif()
+
 # libmseed（miniSEED3 打包/解析）
 set(MSEED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/mseed")
 if(WIN32)
@@ -16,9 +26,14 @@ if(WIN32)
         set(MSEED_LIB "${MSEED_DIR}/libs/x32/libmseed.lib")
     endif()
 else()
-    set(MSEED_LIB "${MSEED_DIR}/libs_linux/libmseed.a")
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
+        set(MSEED_LIB
+            "${MSEED_DIR}/libs_linux/aarch64/libmseed.a")
+    else()
+        set(MSEED_LIB
+            "${MSEED_DIR}/libs_linux/libmseed.a")
+    endif()
 endif()
-
 set(MINISRC
     src/main.cpp
     src/FrameParser.h    src/FrameParser.cpp
@@ -89,3 +104,4 @@ endif()
 target_link_libraries(MiniWatchdog PRIVATE
     Qt5::Core Qt5::Network
 )
+

@@ -52,8 +52,18 @@ void TcpConnection::setupSocketSignals()
     connect(m_socket, &QTcpSocket::readyRead, this, &TcpConnection::onReadyRead);
     connect(m_socket, &QTcpSocket::connected, this, &TcpConnection::onConnected);
     connect(m_socket, &QTcpSocket::disconnected, this, &TcpConnection::onDisconnected);
-    connect(m_socket, QOverload<QAbstractSocket::SocketError>::of(&QTcpSocket::errorOccurred),
-            this, &TcpConnection::onSocketError);
+#if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
+    connect(m_socket,
+            &QAbstractSocket::errorOccurred,
+            this,
+            &TcpConnection::onSocketError);
+#else
+    connect(m_socket,
+            QOverload<QAbstractSocket::SocketError>::of(
+                &QAbstractSocket::error),
+            this,
+            &TcpConnection::onSocketError);
+#endif
 }
 
 void TcpConnection::onReadyRead()
