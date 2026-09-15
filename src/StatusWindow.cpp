@@ -5,6 +5,7 @@
 #include "MDataPickder.h"
 #include "AppConfig.h"
 #include "LogManage.h"
+#include "MseedUploader.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -12,6 +13,7 @@
 #include <QFormLayout>
 #include <QFileInfo>
 #include <QDateTime>
+#include <QCheckBox>
 #include <cstring>
 
 StatusWindow::StatusWindow(QWidget* parent)
@@ -40,6 +42,21 @@ StatusWindow::StatusWindow(QWidget* parent)
 	mainLayout->addWidget(m_table, 3);
 	mainLayout->addWidget(m_syncLabel);
 	mainLayout->addWidget(initParamFormWidget(), 0);
+
+	// ---- mseed 网络上传设置（picker 目录生成 mseed 后自动上传，支持断点续传）----
+	QGroupBox* uploadBox = new QGroupBox(QStringLiteral("mseed网络上传"), this);
+	QHBoxLayout* uploadLay = new QHBoxLayout(uploadBox);
+	m_uploadCheck = new QCheckBox(QStringLiteral("启用"), uploadBox);
+	m_uploadEdit = new QLineEdit(uploadBox);
+	m_uploadEdit->setPlaceholderText(QStringLiteral("服务器地址，如 http://192.168.1.100:9001"));
+	uploadLay->addWidget(m_uploadCheck);
+	uploadLay->addWidget(m_uploadEdit, 1);
+	QPushButton* uploadApplyBtn = new QPushButton(QStringLiteral("应用"), uploadBox);
+	uploadLay->addWidget(uploadApplyBtn);
+	m_uploadCheck->setChecked(MseedUploader::Instance()->enabled());
+	m_uploadEdit->setText(MseedUploader::Instance()->serverUrl());
+	connect(uploadApplyBtn, &QPushButton::clicked, this, &StatusWindow::onApplyUploadSettings);
+	mainLayout->addWidget(uploadBox, 0);
 	mainLayout->addWidget(new QLabel(QStringLiteral("日志:"), this), 0);
 	mainLayout->addWidget(m_log, 2);
 
@@ -189,5 +206,12 @@ void StatusWindow::onApplyParams()
 	}
 	AppConfig::Instance()->syncConfig();
 	m_log->appendPlainText(QStringLiteral("[设置] 算法参数已应用"));
+}
+
+void StatusWindow::onApplyUploadSettings()
+{
+	MseedUploader::Instance()->applySettings(
+		m_uploadCheck->isChecked(), m_uploadEdit->text().trimmed());
+	m_log->appendPlainText(QStringLiteral("[设置] mseed上传设置已应用"));
 }
 

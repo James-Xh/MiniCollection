@@ -113,8 +113,8 @@ Q_INVOKABLE void MDataPickder::addData(int nstaid, const QVector<float>& zValues
 	}
 
 	QMutexLocker locker(&m_mutex);
-	// 时钟异常站：所有通道数据不进入拾取计算，等待时钟恢复（slot_gpsStatus 中重新放行）。
-	if (m_gpsAbnormalStations.contains(nstaid)) {
+	// 时钟异常站闸门：保底站(所有站时钟均异常时有效通道最多的站)放行，其余异常站数据不进入拾取计算。
+	if (m_gpsAbnormalStations.contains(nstaid) && nstaid != m_gpsFallbackStation) {
 		const qint64 gateNowMs = QDateTime::currentMSecsSinceEpoch();
 		if (gateNowMs >= m_nextGpsDropLogMs.value(nstaid, 0)) {
 			m_nextGpsDropLogMs[nstaid] = gateNowMs + 60000;
@@ -1406,25 +1406,16 @@ void MDataPickder::slot_devStatus(int nrd, int nchan, int nstate, int typeBit)
 void MDataPickder::slot_gpsStatus(int nstaid, int ngps)
 {
 	// ngps 5/6 表示时钟正常（与 SiteItemWidget::setGPSState 判定一致），其余视为时钟异常。
+	// 拦截规则：只要存在时钟正常的站，异常站数据不参与拾取计算；
+	// 若所有站时钟均异常，则放行有效通道数最多的异常站（保底），确保始终有站参与计算。
 	if (nstaid < 0 || nstaid >= m_nStationCount)
 		return;
 	const bool abnormal = (ngps != 5 && ngps != 6);
 	QMutexLocker locker(&m_mutex);
+	const int prevFallback = m_gpsFallbackStation;
 	m_stationGps[nstaid] = ngps;
-	const bool wasAbnormal = m_gpsAbnormalStations.contains(nstaid);
-	if (abnormal == wasAbnormal)
-		return;
 	if (abnormal) {
 		m_gpsAbnormalStations.insert(nstaid);
-		// 时钟异常：该站所有通道数据暂停参与拾取计算，等待时钟恢复后重新走同步验证加入。
-		m_onlineStations.remove(nstaid);
-		m_pendingJoinStations.remove(nstaid);
-		m_processingStations.remove(nstaid);
-		if (m_stationStreams.contains(nstaid))
-			m_stationStreams[nstaid].clear();
-		refreshStationTopology();
-		setSyncState(2, 0, nstaid,
-			QStringLiteral("站%1时钟异常(GPS状态%2)，暂停参与拾取计算，待时钟恢复").arg(nstaid + 1).arg(ngps));
 	}
 	else {
 		m_gpsAbnormalStations.remove(nstaid);
@@ -1432,6 +1423,66 @@ void MDataPickder::slot_gpsStatus(int nstaid, int ngps)
 		emit CallManage::getInstance()->sig_addLog("PickerSync",
 			QStringLiteral("站%1时钟恢复正常(GPS状态%2)，将重新参与拾取计算").arg(nstaid + 1).arg(ngps));
 	}
+	m_gpsFallbackStation = computeGpsFallbackStation();
+
+	// 重新评估每个时钟异常站的拦截状态（保底放行站变化时生效）。
+	for (int sid : m_gpsAbnormalStations) {
+		if (sid < 0 || sid >= m_nStationCount)
+			continue;
+		const bool nowBlocked = (sid != m_gpsFallbackStation);
+		const bool wasBlocked = (sid != prevFallback);
+		if (nowBlocked && !wasBlocked) {
+			// 从放行转为拦截：剔除该站数据并复位同步，等待时钟恢复。
+			m_onlineStations.remove(sid);
+			m_pendingJoinStations.remove(sid);
+			m_processingStations.remove(sid);
+			if (m_stationStreams.contains(sid))
+				m_stationStreams[sid].clear();
+			refreshStationTopology();
+			setSyncState(2, 0, sid,
+				QStringLiteral("站%1时钟异常(GPS状态%2)，暂停参与拾取计算，待时钟恢复")
+					.arg(sid + 1).arg(m_stationGps.value(sid)));
+		}
+		else if (!nowBlocked && wasBlocked) {
+			emit CallManage::getInstance()->sig_addLog("PickerSync",
+				QStringLiteral("所有站时钟均异常，保留有效通道最多的站%1(有效通道%2个)参与拾取计算")
+					.arg(sid + 1).arg(effectiveChannelCount(sid)));
+		}
+	}
+}
+
+int MDataPickder::effectiveChannelCount(int stationId) const
+{
+	int cnt = 0;
+	for (int ch = 0; ch < CHANNEL_COUNT; ++ch) {
+		const int idx = stationId * CHANNEL_COUNT + ch;
+		if (idx >= 0 && idx < MSEED_CHAN && m_nChanStatus[idx] == 1)
+			++cnt;
+	}
+	return cnt;
+}
+
+int MDataPickder::computeGpsFallbackStation() const
+{
+	// 任意一个站时钟正常，就不需要保底放行（异常站全部拦截）。
+	// 从未上报过GPS状态的站不视为"时钟正常"，避免"仅一站无GPS模块"场景被误拦截。
+	for (auto it = m_stationGps.constBegin(); it != m_stationGps.constEnd(); ++it) {
+		if (it.value() == 5 || it.value() == 6)
+			return -1;
+	}
+	// 所有站时钟均异常：放行有效通道数最多的站（并列取站号小者）。
+	int best = -1;
+	int bestCnt = -1;
+	for (int sid : m_gpsAbnormalStations) {
+		if (sid < 0 || sid >= m_nStationCount)
+			continue;
+		const int cnt = effectiveChannelCount(sid);
+		if (cnt > bestCnt || (cnt == bestCnt && (best < 0 || sid < best))) {
+			best = sid;
+			bestCnt = cnt;
+		}
+	}
+	return best;
 }
 
 void MDataPickder::slot_canRecv(int nstaid, int ntag, QList<QStringList> lstDt)

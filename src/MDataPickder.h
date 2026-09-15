@@ -169,6 +169,8 @@ private:
 	QList<int> participatingStations() const;
 	QVector<int> activeGlobalChannels() const;
 	void refreshStationTopology();
+	int effectiveChannelCount(int stationId) const;   // 有效通道数(m_nChanStatus==1)
+	int computeGpsFallbackStation() const;            // 持锁调用：所有站时钟均异常时的保底站(-1=无)
 	void resetCalculationState(bool clearRawStreams);
 	void setSyncState(int state, qint64 maxDiffUs, int stationId, const QString& message);
 	void clearStationState(int stationId);
@@ -213,8 +215,9 @@ private:
 	int m_nChanStatus[MSEED_CHAN] = { 0 };
 	int m_nGain[MSEED_CHAN] = { 1 };			// 通道增益、放大率
 	QMap<int, int> m_stationGps;            // 每站最近一次GPS时钟状态(ngps)
-	QSet<int> m_gpsAbnormalStations;        // 时钟异常站(ngps!=5/6)，其数据不参与拾取计算
+	QSet<int> m_gpsAbnormalStations;        // 时钟异常站(ngps!=5/6)集合
 	QMap<int, qint64> m_nextGpsDropLogMs;   // 时钟异常丢帧日志节流
+	int m_gpsFallbackStation = -1;          // 所有站时钟均异常时，保底放行参与计算的站(-1=无，此时异常站全部拦截)
 
 	int m_nUnclosedPtNum = 0;	// 未闭合状态下添加点数，累加
 	qint64 m_lastSavedEventStartMs = -1;

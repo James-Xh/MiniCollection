@@ -4,6 +4,7 @@
 #include <QWidget>
 #include <QTableWidget>
 #include <QLineEdit>
+#include <QCheckBox>
 #include <QPlainTextEdit>
 #include <QLabel>
 #include <QPushButton>
@@ -28,6 +29,7 @@ private slots:
     void onPickerNewFile(const QString& file);
     void onAddLog(const QString& type, const QString& desc);
     void onApplyParams();
+    void onApplyUploadSettings();
 
 private:
     void initParamForm();
@@ -46,6 +48,10 @@ private:
     QList<QLineEdit*> m_paramEdits;
     QStringList m_paramNames;
     QList<int> m_paramTags;
+
+    // mseed 网络上传设置
+    QCheckBox* m_uploadCheck = nullptr;
+    QLineEdit* m_uploadEdit = nullptr;
 };
 
 #endif // STATUSWINDOW_H

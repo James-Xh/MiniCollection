@@ -11,6 +11,7 @@
 #include "MDataPickder.h"
 #include "MDataWriter.h"
 #include "MseedFileHandler.h"
+#include "MseedUploader.h"
 #include "StatusWindow.h"
 #include <QCoreApplication>
 #include <QDir>
@@ -100,6 +101,9 @@ int main(int argc, char* argv[])
 	QObject::connect(mseedThread, &QThread::finished, mseedHandler, &MseedFileHandler::deleteLater);
 	QObject::connect(mseedThread, &QThread::finished, mseedThread, &QThread::deleteLater);
 	mseedThread->start();
+
+	// mseed 事件文件网络上传（picker -> HTTP 服务端，支持断点续传；[Upload] 未启用时空转）
+	MseedUploader::Instance()->start(AppConfig::Instance()->getPickerPath());
 
 	// 组装数据流：TCP帧 -> 解析 -> 算法/写文件
 	QObject::connect(CallManage::getInstance(), &CallManage::sig_tcpData,
