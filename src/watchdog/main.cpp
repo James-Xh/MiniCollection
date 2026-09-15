@@ -4,7 +4,7 @@
 #include <csignal>
 
 // 看门狗（从原项目 src/watchdog 移植）：
-// 启动并守护同目录下的 MiniCollection.exe，
+// 启动并守护同目录下的 MiniCollection 主程序，
 // 崩溃退出(CrashExit)时自动重启（默认最多100次，间隔2秒），
 // 可选 UDP 心跳检测（默认关闭，与原项目一致）。
 static WatchDog *g_watchdog = nullptr;
@@ -32,7 +32,11 @@ int main(int argc, char *argv[])
 #endif
 
     // 被守护的程序路径（主程序和看门狗在同一目录）
-    QString program = QCoreApplication::applicationDirPath() + "/MiniCollection.exe";
+#ifdef Q_OS_WIN
+    const QString program = QCoreApplication::applicationDirPath() + "/MiniCollection.exe";
+#else
+    const QString program = QCoreApplication::applicationDirPath() + "/MiniCollection";
+#endif
 
     // 配置与原项目一致：最大重启100次，重启间隔2秒，心跳超时20秒
     WatchDog dog(program, QStringList(), 100, 2000, 20000);

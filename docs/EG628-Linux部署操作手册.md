@@ -159,6 +159,15 @@ scp build-eg628-qt6/MiniCollection \
 
 然后安全停止、备份、替换并启动：
 
+如果目标机有桌面/X11：
+```bash
+ssh root@192.168.111.2 '
+  cd /opt/MiniCollection
+  export DISPLAY=:0
+  ./MiniCollection
+'
+```
+
 ```bash
 ssh root@192.168.111.2 '
   set -e
@@ -180,7 +189,8 @@ scp build-eg628-qt6/MiniWatchdog \
     root@192.168.111.2:/opt/MiniCollection/
 ```
 
-systemd 已负责异常重启，Linux 部署通常不需要启动 `MiniWatchdog`。
+Linux 下由 systemd 拉起 `MiniWatchdog`，再由 `MiniWatchdog` 拉起并守护
+`MiniCollection`。更新任意一个程序后都应重启 systemd 服务。
 
 ## 六、配置 systemd 开机启动
 
@@ -192,35 +202,42 @@ systemd 已负责异常重启，Linux 部署通常不需要启动 `MiniWatchdog`
 cat >/etc/systemd/system/minicollection.service <<'EOF'
 [Unit]
 Description=MiniCollection acquisition service
-After=network-online.target
+After=network-online.target display-manager.service
 Wants=network-online.target
 
 [Service]
 Type=simple
 User=root
 WorkingDirectory=/opt/MiniCollection
-ExecStart=/opt/MiniCollection/MiniCollection
-Restart=on-failure
+ExecStart=/opt/MiniCollection/MiniWatchdog
+Restart=always
 RestartSec=2
-Environment=QT_QPA_PLATFORM=eglfs
+Environment=DISPLAY=:0
+Environment=QT_QPA_PLATFORM=xcb
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=graphical.target
 EOF
 ```
 
-如果目标系统使用 X11 桌面，把服务中的环境配置改为：
+上述配置要求目标机已启动 X11 图形服务和窗口管理器。`xcb` 模式下应用是普通窗口，
+鼠标指针、窗口边框、移动和缩放由窗口管理器负责。先在目标机的图形桌面终端执行：
 
-```ini
-Environment=DISPLAY=:0
-Environment=QT_QPA_PLATFORM=xcb
+```bash
+echo "$DISPLAY"
+echo "$XAUTHORITY"
+ps -ef | grep -E '[X]org|[X]wayland'
 ```
 
-如果目标系统直接使用 framebuffer，但 EGLFS 不适用，可改为：
+如果 `DISPLAY` 不是 `:0`，按实际输出修改服务。若图形会话使用 Xauthority，服务还要增加，
+路径按 `echo "$XAUTHORITY"` 的实际输出填写：
 
 ```ini
-Environment=QT_QPA_PLATFORM=linuxfb
+Environment=XAUTHORITY=/实际路径/.Xauthority
 ```
+
+如果目标机没有 X11 和窗口管理器，`eglfs` 与 `linuxfb` 都是直接占用显示设备的模式，
+不能提供普通桌面窗口；需要先安装并启动 X11/窗口管理器，才能使用 `xcb`。
 
 加载、启用并立即启动：
 
@@ -320,11 +337,12 @@ ldd /opt/MiniCollection/MiniCollection | grep 'not found'
 
 ```bash
 QT_DEBUG_PLUGINS=1 \
-QT_QPA_PLATFORM=eglfs \
+DISPLAY=:0 \
+QT_QPA_PLATFORM=xcb \
 /opt/MiniCollection/MiniCollection
 ```
 
-根据实际显示环境在 `eglfs`、`linuxfb`、`xcb` 中选择，并同步修改 systemd 服务。
+窗口化运行必须选择 `xcb`，并确保 X11、窗口管理器、`DISPLAY` 和访问权限均正常。
 
 ### 修改服务文件后没有生效
 
@@ -362,4 +380,3 @@ ssh root@192.168.111.2 '
   systemctl --no-pager --full status minicollection.service
 '
 ```
-
