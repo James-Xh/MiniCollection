@@ -32,6 +32,9 @@ libmseed（复用 `../thirdpartyLib/mseed`）。
 EG628 AArch64 的交叉编译、增量更新部署和 systemd 开机启动步骤见
 [`docs/EG628-Linux部署操作手册.md`](docs/EG628-Linux部署操作手册.md)。
 
+mseed 分片上传、断点续传、服务器部署和无重复消费接口见
+[`docs/Mseed服务器部署与接口协议.md`](docs/Mseed服务器部署与接口协议.md)。
+
 ## 看门狗（MiniWatchdog）
 从原项目 `src/watchdog` 移植，行为一致：
 - 启动并守护同目录下的 `MiniCollection.exe`

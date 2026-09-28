@@ -150,47 +150,43 @@ ldd /opt/MiniCollection/MiniWatchdog
 
 修改代码并成功编译后，在编译机执行：
 
+在编译机执行：
 ```bash
 cd "$HOME/work/MiniCollection"
 
 scp build-eg628-qt6/MiniCollection \
-    root@192.168.111.2:/tmp/MiniCollection.new
+    build-eg628-qt6/MiniWatchdog \
+    root@192.168.111.2:/tmp/
 ```
-
-然后安全停止、备份、替换并启动：
-
-如果目标机有桌面/X11：
-```bash
-ssh root@192.168.111.2 '
-  cd /opt/MiniCollection
-  export DISPLAY=:0
-  ./MiniCollection
-'
-```
-
+然后停止服务、替换程序：
 ```bash
 ssh root@192.168.111.2 '
   set -e
+
   systemctl stop minicollection.service
-  cd /opt/MiniCollection
-  [ ! -f MiniCollection ] || cp -a MiniCollection MiniCollection.bak
-  install -m 755 /tmp/MiniCollection.new MiniCollection
+
+  pkill -TERM MiniWatchdog 2>/dev/null || true
+  pkill -TERM MiniCollection 2>/dev/null || true
+
+  sleep 2
+
+  install -m 755 /tmp/MiniCollection \
+    /opt/MiniCollection/MiniCollection
+
+  install -m 755 /tmp/MiniWatchdog \
+    /opt/MiniCollection/MiniWatchdog
+
   systemctl start minicollection.service
   systemctl --no-pager --full status minicollection.service
 '
 ```
-
-更新过程只替换 `MiniCollection`，不会影响 `data` 和 `Log`。
-
-如果同时修改了看门狗，再单独上传：
-
+确认新程序已经运行：
 ```bash
-scp build-eg628-qt6/MiniWatchdog \
-    root@192.168.111.2:/opt/MiniCollection/
+ssh root@192.168.111.2 '
+  ps -ef | grep -E "[M]iniWatchdog|[M]iniCollection"
+  journalctl -u minicollection.service -n 50 --no-pager
+'
 ```
-
-Linux 下由 systemd 拉起 `MiniWatchdog`，再由 `MiniWatchdog` 拉起并守护
-`MiniCollection`。更新任意一个程序后都应重启 systemd 服务。
 
 ## 六、配置 systemd 开机启动
 
@@ -245,6 +241,15 @@ Environment=XAUTHORITY=/实际路径/.Xauthority
 systemctl daemon-reload
 systemctl enable --now minicollection.service
 systemctl --no-pager --full status minicollection.service
+```
+
+注意：以上 `systemctl` 命令必须在 EG628 目标机上执行。编译机上执行会得到
+`Access denied` 或 `No such file or directory`，因为编译机没有这个 service 文件。
+从编译机远程执行可使用：
+
+```bash
+ssh root@192.168.111.2 \
+  'systemctl daemon-reload && systemctl enable --now minicollection.service && systemctl is-enabled minicollection.service'
 ```
 
 验证是否设置成功：
@@ -344,6 +349,37 @@ QT_QPA_PLATFORM=xcb \
 
 窗口化运行必须选择 `xcb`，并确保 X11、窗口管理器、`DISPLAY` 和访问权限均正常。
 
+### 目标机没有接显示器
+
+显示器本身不是 Qt 启动的必要条件，但窗口化的 `xcb` 模式必须有可连接的 X Server。
+如果目标机没有显示器但运行了 Xorg 虚拟显示（例如 Xvfb），可以继续使用 `xcb`，并把
+`DISPLAY` 设置为该虚拟显示；此时窗口存在于虚拟屏幕上，物理上不可见。
+
+如果目标机没有任何 X Server，只要求后台采集、写文件和网络连接，可以使用 Qt 的
+`offscreen` 平台。它不会显示窗口，但程序的 `QApplication` 和业务线程仍可运行。
+将服务中的两行替换为：
+
+```ini
+Environment=QT_QPA_PLATFORM=offscreen
+```
+
+并把启动目标改为 `multi-user.target`：
+
+```ini
+[Install]
+WantedBy=multi-user.target
+```
+
+修改后在目标机执行：
+
+```bash
+systemctl daemon-reload
+systemctl enable --now minicollection.service
+```
+
+`offscreen` 模式下不要期待窗口、鼠标或桌面交互；需要查看界面时，应恢复 `xcb` 并提供
+Xorg/Xvfb 及正确的 `DISPLAY`、`XAUTHORITY`。
+
 ### 修改服务文件后没有生效
 
 ```bash
@@ -380,3 +416,116 @@ ssh root@192.168.111.2 '
   systemctl --no-pager --full status minicollection.service
 '
 ```
+
+## 十一、开机自动配置 eth0 和 SSH
+
+如果每次重启后都需要手工执行 `ip link set eth0 nomaster`、`ip addr add` 等命令，
+说明网卡配置没有持久化。以下方案使用 systemd 在 SSH 启动前自动执行网络配置。
+
+以下命令在 EG628 目标机执行。先确认网卡名称和当前状态：
+
+```bash
+ip -br link
+ip -br addr
+```
+
+创建配置脚本（按实际网段修改地址；如果不需要网关可删除 `ip route` 一行）：
+
+```bash
+cat >/usr/local/sbin/eg628-network.sh <<'EOF'
+#!/bin/sh
+set -eu
+
+IF=eth0
+ADDR=192.168.111.2/24
+GATEWAY=192.168.111.1
+
+# eth0 如果曾被加入 bridge，先解除 enslave
+ip link set "$IF" nomaster 2>/dev/null || true
+ip link set "$IF" up
+
+# 避免重启服务时重复添加地址
+ip addr flush dev "$IF"
+ip addr add "$ADDR" dev "$IF"
+
+# 没有网关时删除这两行
+ip route del default dev "$IF" 2>/dev/null || true
+ip route add default via "$GATEWAY" dev "$IF" 2>/dev/null || true
+EOF
+
+chmod 755 /usr/local/sbin/eg628-network.sh
+```
+
+创建 systemd 服务：
+
+```bash
+cat >/etc/systemd/system/eg628-network.service <<'EOF'
+[Unit]
+Description=EG628 persistent eth0 network configuration
+DefaultDependencies=no
+After=local-fs.target
+Before=network-pre.target network.target ssh.service
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/eg628-network.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+加载、启用并立即测试：
+
+```bash
+systemctl daemon-reload
+systemctl enable eg628-network.service
+systemctl restart eg628-network.service
+systemctl --no-pager --full status eg628-network.service
+ip -br addr show eth0
+ip route
+```
+
+应看到 `eth0` 有 `192.168.111.2/24`。之后重启验证：
+
+```bash
+reboot
+```
+
+重新联网后检查：
+
+```bash
+systemctl is-enabled eg628-network.service
+systemctl is-active eg628-network.service
+ip -br addr show eth0
+```
+
+如果服务失败，查看：
+
+```bash
+journalctl -u eg628-network.service -b --no-pager
+```
+
+注意：如果系统由 NetworkManager、netplan 或 systemd-networkd 管理 `eth0`，它们可能在
+本服务之后再次覆盖地址。长期推荐把固定地址写入系统原生网络配置，并删除脚本中的重复配置。
+如果目标机使用 NetworkManager，可先检查：
+
+```bash
+systemctl is-active NetworkManager
+nmcli connection show
+```
+
+若使用 NetworkManager，可以改用持久连接配置：
+
+```bash
+nmcli connection add type ethernet ifname eth0 con-name eg628-eth0 \
+  ipv4.method manual ipv4.addresses 192.168.111.2/24 \
+  ipv4.gateway 192.168.111.1 ipv4.dns "" \
+  connection.autoconnect yes
+nmcli connection up eg628-eth0
+```
+
+如果已有同名连接，使用 `nmcli connection modify` 修改它，不要重复创建。固定 IP 配置完成
+后，SSH 将在每次开机自动恢复；`minicollection.service` 会在网络目标达到后启动。

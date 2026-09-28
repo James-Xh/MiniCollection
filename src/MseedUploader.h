@@ -18,7 +18,7 @@ class QNetworkReply;
 //   2) PUT  {同上URL}，请求头 "Content-Range: bytes <start>-<end>/<total>"，
 //      每次发送一个分片(256KB)；每个分片均以 2xx 应答，最后一片完成即上传结束。
 // 完成记录：data/upload/done.txt (每行一个文件名，避免重复上传)。
-// 配置项：Config.ini [Upload] enabled(0/1)、serverUrl(如 http://192.168.1.100:9001)、pollSec(默认5)。
+// 配置项：Config.ini [Upload] enabled(0/1)、serverUrl、token、pollSec(默认5)。
 class MseedUploader : public QObject
 {
 	Q_OBJECT
@@ -55,6 +55,7 @@ private:
 	QString m_pickerPath;
 	QString m_stateDir;
 	QString m_serverUrl;
+	QByteArray m_uploadToken;
 	bool m_enabled = false;
 	bool m_started = false;
 	bool m_busy = false;

@@ -75,6 +75,7 @@ void MseedUploader::applyFromConfig()
 {
 	m_enabled = AppConfig::Instance()->getConfig("Upload", "enabled").toInt() != 0;
 	m_serverUrl = AppConfig::Instance()->getConfig("Upload", "serverUrl").toString().trimmed();
+	m_uploadToken = AppConfig::Instance()->getConfig("Upload", "token").toString().trimmed().toUtf8();
 	while (m_serverUrl.endsWith('/'))
 		m_serverUrl.chop(1);
 	int pollSec = AppConfig::Instance()->getConfig("Upload", "pollSec").toInt();
@@ -181,6 +182,8 @@ bool MseedUploader::beginNextFile()
 void MseedUploader::startHead(const QString& filePath)
 {
 	QNetworkRequest request(uploadUrl(filePath));
+	if (!m_uploadToken.isEmpty())
+		request.setRawHeader("X-Upload-Token", m_uploadToken);
 	QNetworkReply* reply = m_nam->head(request);
 	m_reply = reply;
 	connect(reply, &QNetworkReply::finished, this, [this, reply, filePath]() {
@@ -240,6 +243,8 @@ void MseedUploader::startChunk(const QString& filePath, qint64 offset)
 
 	QNetworkRequest request(uploadUrl(filePath));
 	request.setHeader(QNetworkRequest::ContentTypeHeader, "application/octet-stream");
+	if (!m_uploadToken.isEmpty())
+		request.setRawHeader("X-Upload-Token", m_uploadToken);
 	request.setRawHeader("Content-Range",
 		QStringLiteral("bytes %1-%2/%3").arg(offset).arg(end).arg(total).toUtf8());
 	QNetworkReply* reply = m_nam->put(request, chunk);
