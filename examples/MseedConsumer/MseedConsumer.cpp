@@ -1,0 +1,293 @@
+﻿#include "MseedConsumer.h"
+
+#include <QDir>
+#include <QFileInfo>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QSaveFile>
+#include <QUrlQuery>
+#include <QDebug>
+
+MseedConsumer::MseedConsumer(const QUrl& serverUrl,
+                             const QByteArray& downloadToken,
+                             const QString& outputDir,
+                             const QString& stateFile,
+                             int pollSeconds,
+                             QObject* parent)
+    : QObject(parent)
+    , m_serverUrl(serverUrl)
+    , m_downloadToken(downloadToken)
+    , m_outputDir(QDir(outputDir).absolutePath())
+    , m_stateFile(QFileInfo(stateFile).absoluteFilePath())
+    , m_pollMs(qMax(1, pollSeconds) * 1000)
+{
+    while (m_serverUrl.path().endsWith('/')) {
+        QString path = m_serverUrl.path();
+        path.chop(1);
+        m_serverUrl.setPath(path);
+    }
+    m_timer.setSingleShot(true);
+    connect(&m_timer, &QTimer::timeout, this, &MseedConsumer::poll);
+}
+
+bool MseedConsumer::start()
+{
+    if (m_started)
+        return true;
+    if (!m_serverUrl.isValid() || m_serverUrl.scheme().isEmpty()) {
+        qCritical() << "Invalid server URL:" << m_serverUrl;
+        return false;
+    }
+    if (!QDir().mkpath(m_outputDir)) {
+        qCritical() << "Cannot create output directory:" << m_outputDir;
+        return false;
+    }
+    if (!QDir().mkpath(QFileInfo(m_stateFile).absolutePath())) {
+        qCritical() << "Cannot create state directory:" << m_stateFile;
+        return false;
+    }
+    if (!loadCursor())
+        return false;
+
+    qInfo() << "MseedConsumer started, cursor=" << m_cursor
+            << "output=" << m_outputDir;
+    m_started = true;
+    emit cursorChanged(m_cursor);
+    emit statusChanged(QStringLiteral("运行中，等待服务器文件"));
+    emit logMessage(QStringLiteral("消费服务启动，当前游标：%1").arg(m_cursor));
+    scheduleNext(0);
+    return true;
+}
+
+void MseedConsumer::stop()
+{
+    m_started = false;
+    m_timer.stop();
+    emit statusChanged(QStringLiteral("已停止"));
+    emit logMessage(QStringLiteral("消费服务已停止"));
+}
+
+void MseedConsumer::poll()
+{
+    if (m_started && !m_busy)
+        requestNext();
+}
+
+void MseedConsumer::requestNext()
+{
+    QUrl url = m_serverUrl;
+    url.setPath(url.path() + "/coalmine/mseed/next");
+    QUrlQuery query;
+    query.addQueryItem("after_id", QString::number(m_cursor));
+    url.setQuery(query);
+
+    QNetworkRequest request(url);
+    request.setRawHeader("X-Download-Token", m_downloadToken);
+    request.setAttribute(QNetworkRequest::FollowRedirectsAttribute, true);
+    m_busy = true;
+    QNetworkReply* reply = m_network.get(request);
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        const int status = reply->attribute(
+            QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const QByteArray body = reply->readAll();
+        const QNetworkReply::NetworkError error = reply->error();
+        reply->deleteLater();
+
+        if (status == 204) {
+            m_busy = false;
+            emit statusChanged(QStringLiteral("暂无新文件，%1秒后重试").arg(m_pollMs / 1000));
+            scheduleNext();
+            return;
+        }
+        if (error != QNetworkReply::NoError || status != 200) {
+            fail(QStringLiteral("查询失败: HTTP %1, %2")
+                     .arg(status).arg(reply->errorString()));
+            return;
+        }
+
+        QJsonParseError parseError;
+        const QJsonDocument document = QJsonDocument::fromJson(body, &parseError);
+        if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+            fail(QStringLiteral("服务器返回的JSON无效"));
+            return;
+        }
+
+        const QJsonObject object = document.object();
+        const qint64 id = object.value("id").toVariant().toLongLong();
+        const QString name = object.value("name").toString();
+        const qint64 size = object.value("size").toVariant().toLongLong();
+        const QByteArray sha256 = object.value("sha256").toString().toLatin1().toLower();
+        const QUrl advertisedUrl(object.value("download_url").toString());
+        // The server may expose an internal download URL (for example
+        // http://127.0.0.1:9001/...).  The consumer must always connect to
+        // the configured public endpoint and only use the returned path.
+        QUrl downloadUrl = m_serverUrl;
+        if (advertisedUrl.isValid() && !advertisedUrl.path().isEmpty()) {
+            downloadUrl.setPath(advertisedUrl.path());
+            downloadUrl.setQuery(advertisedUrl.query());
+        }
+        if (id <= m_cursor || size < 0 || sha256.size() != 64 ||
+            !validateName(name) || !advertisedUrl.isValid() ||
+            advertisedUrl.path().isEmpty() || !downloadUrl.isValid()) {
+            fail(QStringLiteral("服务器返回的文件元数据无效"));
+            return;
+        }
+        beginDownload(id, name, size, sha256, downloadUrl);
+    });
+}
+
+void MseedConsumer::beginDownload(qint64 id,
+                                  const QString& name,
+                                  qint64 size,
+                                  const QByteArray& sha256,
+                                  const QUrl& downloadUrl)
+{
+    m_pendingId = id;
+    m_pendingName = name;
+    m_expectedSize = size;
+    m_expectedSha256 = sha256;
+    m_finalPath = QDir(m_outputDir).absoluteFilePath(name);
+    m_partPath = m_finalPath + ".part";
+    m_hash.reset();
+    emit statusChanged(QStringLiteral("正在下载：%1").arg(name));
+    emit logMessage(QStringLiteral("发现新文件：ID=%1，名称=%2，大小=%3")
+                        .arg(id).arg(name).arg(size));
+
+    QFile::remove(m_partPath);
+    m_output.setFileName(m_partPath);
+    if (!m_output.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        fail(QStringLiteral("无法创建临时文件: %1").arg(m_partPath));
+        return;
+    }
+
+    QNetworkRequest request(downloadUrl);
+    request.setRawHeader("X-Download-Token", m_downloadToken);
+    request.setAttribute(QNetworkRequest::FollowRedirectsAttribute, true);
+    QNetworkReply* reply = m_network.get(request);
+
+    connect(reply, &QIODevice::readyRead, this, [this, reply]() {
+        const QByteArray data = reply->readAll();
+        if (!data.isEmpty()) {
+            if (m_output.write(data) != data.size()) {
+                reply->abort();
+                return;
+            }
+            m_hash.addData(data);
+        }
+    });
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        finishDownload(reply);
+    });
+}
+
+void MseedConsumer::finishDownload(QNetworkReply* reply)
+{
+    const QByteArray remaining = reply->readAll();
+    if (!remaining.isEmpty()) {
+        m_output.write(remaining);
+        m_hash.addData(remaining);
+    }
+    m_output.flush();
+    m_output.close();
+
+    const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    const QNetworkReply::NetworkError error = reply->error();
+    const QString errorText = reply->errorString();
+    reply->deleteLater();
+
+    const qint64 actualSize = QFileInfo(m_partPath).size();
+    const QByteArray actualHash = m_hash.result().toHex();
+
+    if (error != QNetworkReply::NoError || status != 200 ||
+        actualSize != m_expectedSize || actualHash != m_expectedSha256) {
+        QFile::remove(m_partPath);
+        fail(QStringLiteral("下载校验失败: %1 HTTP=%2 size=%3/%4 hash=%5/%6 error=%7")
+                 .arg(m_pendingName).arg(status)
+                 .arg(actualSize).arg(m_expectedSize)
+                 .arg(QString::fromLatin1(actualHash))
+                 .arg(QString::fromLatin1(m_expectedSha256))
+                 .arg(errorText));
+        return;
+    }
+
+    if (QFile::exists(m_finalPath) && !QFile::remove(m_finalPath)) {
+        fail(QStringLiteral("无法替换已有文件: %1").arg(m_finalPath));
+        return;
+    }
+    if (!QFile::rename(m_partPath, m_finalPath)) {
+        fail(QStringLiteral("无法发布完整文件: %1").arg(m_finalPath));
+        return;
+    }
+
+    // 在这里调用业务处理逻辑。只有业务成功后才能保存游标。
+    qInfo() << "Downloaded complete mseed: id=" << m_pendingId
+            << "file=" << m_finalPath;
+    if (!saveCursor(m_pendingId)) {
+        fail(QStringLiteral("无法保存消费游标"));
+        return;
+    }
+    m_cursor = m_pendingId;
+    emit cursorChanged(m_cursor);
+    emit fileDownloaded(m_pendingId, m_pendingName, m_finalPath);
+    emit statusChanged(QStringLiteral("下载完成：%1").arg(m_pendingName));
+    emit logMessage(QStringLiteral("完整文件已保存：%1").arg(m_finalPath));
+    m_busy = false;
+    scheduleNext(0);
+}
+
+bool MseedConsumer::loadCursor()
+{
+    QFile file(m_stateFile);
+    if (!file.exists()) {
+        m_cursor = 0;
+        return true;
+    }
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        qCritical() << "Cannot read cursor file:" << m_stateFile;
+        return false;
+    }
+    bool ok = false;
+    const qint64 value = QString::fromUtf8(file.readAll()).trimmed().toLongLong(&ok);
+    if (!ok || value < 0) {
+        qCritical() << "Invalid cursor file:" << m_stateFile;
+        return false;
+    }
+    m_cursor = value;
+    return true;
+}
+
+bool MseedConsumer::saveCursor(qint64 id)
+{
+    QSaveFile file(m_stateFile);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text))
+        return false;
+    if (file.write(QByteArray::number(id) + "\n") < 0)
+        return false;
+    return file.commit();
+}
+
+bool MseedConsumer::validateName(const QString& name) const
+{
+    return !name.isEmpty() && name == QFileInfo(name).fileName()
+        && name.toLower().endsWith(".mseed");
+}
+
+void MseedConsumer::scheduleNext(int delayMs)
+{
+    if (m_started)
+        m_timer.start(delayMs >= 0 ? delayMs : m_pollMs);
+}
+
+void MseedConsumer::fail(const QString& message)
+{
+    if (m_output.isOpen())
+        m_output.close();
+    qWarning().noquote() << message;
+    emit statusChanged(QStringLiteral("请求失败，稍后重试"));
+    emit logMessage(message);
+    m_busy = false;
+    scheduleNext();
+}
