@@ -12,6 +12,7 @@
 
 MseedConsumer::MseedConsumer(const QUrl& serverUrl,
                              const QByteArray& downloadToken,
+                             const QString& deviceId,
                              const QString& outputDir,
                              const QString& stateFile,
                              int pollSeconds,
@@ -19,6 +20,7 @@ MseedConsumer::MseedConsumer(const QUrl& serverUrl,
     : QObject(parent)
     , m_serverUrl(serverUrl)
     , m_downloadToken(downloadToken)
+    , m_deviceId(deviceId)
     , m_outputDir(QDir(outputDir).absolutePath())
     , m_stateFile(QFileInfo(stateFile).absoluteFilePath())
     , m_pollMs(qMax(1, pollSeconds) * 1000)
@@ -78,7 +80,7 @@ void MseedConsumer::poll()
 void MseedConsumer::requestNext()
 {
     QUrl url = m_serverUrl;
-    url.setPath(url.path() + "/coalmine/mseed/next");
+    url.setPath(url.path() + "/coalmine/mseed/" + m_deviceId + "/next");
     QUrlQuery query;
     query.addQueryItem("after_id", QString::number(m_cursor));
     url.setQuery(query);
@@ -116,6 +118,10 @@ void MseedConsumer::requestNext()
         }
 
         const QJsonObject object = document.object();
+        if (object.value("device_id").toString() != m_deviceId) {
+            fail(QStringLiteral("服务器返回了其它设备的文件"));
+            return;
+        }
         const qint64 id = object.value("id").toVariant().toLongLong();
         const QString name = object.value("name").toString();
         const qint64 size = object.value("size").toVariant().toLongLong();

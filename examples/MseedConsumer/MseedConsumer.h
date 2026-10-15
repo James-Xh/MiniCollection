@@ -18,6 +18,7 @@ class MseedConsumer : public QObject
 public:
     MseedConsumer(const QUrl& serverUrl,
                   const QByteArray& downloadToken,
+                  const QString& deviceId,
                   const QString& outputDir,
                   const QString& stateFile,
                   int pollSeconds,
@@ -51,6 +52,7 @@ private:
 
     QUrl m_serverUrl;
     QByteArray m_downloadToken;
+    QString m_deviceId;
     QString m_outputDir;
     QString m_stateFile;
     int m_pollMs;
