@@ -1,6 +1,19 @@
 cmake_minimum_required(VERSION 3.13)
 project(MiniCollection VERSION 1.0.0 LANGUAGES CXX)
 
+# EG628 business identity. Keep this as a string so identifiers such as "01"
+# retain their leading zero. Set a different value for each device build with
+# -DMINICOLLECTION_DEVICE_ID=02.
+set(MINICOLLECTION_DEVICE_ID "01" CACHE STRING "Fixed EG628 device identity")
+if(NOT MINICOLLECTION_DEVICE_ID MATCHES "^[A-Za-z0-9_-]+$")
+    message(FATAL_ERROR "MINICOLLECTION_DEVICE_ID must contain only letters, digits, '_' or '-'")
+endif()
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/DeviceIdentity.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/DeviceIdentity.h"
+    @ONLY
+)
+
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
@@ -36,6 +49,7 @@ else()
 endif()
 set(MINISRC
     src/main.cpp
+    "${CMAKE_CURRENT_BINARY_DIR}/DeviceIdentity.h"
     src/FrameParser.h    src/FrameParser.cpp
     src/StatusWindow.h   src/StatusWindow.cpp
     src/AppConfig.h      src/AppConfig.cpp

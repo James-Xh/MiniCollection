@@ -13,6 +13,7 @@
 #include "MseedFileHandler.h"
 #include "MseedUploader.h"
 #include "StatusWindow.h"
+#include "DeviceIdentity.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <QThread>
@@ -54,6 +55,7 @@ int main(int argc, char* argv[])
 {
 	QApplication a(argc, argv);
 	a.setApplicationName("MiniCollection");
+	qInfo() << "MiniCollection device identity:" << DeviceIdentity::id();
 
 	// 初始化配置与目录（data/Config.ini、data/temp、data/picker、data/bins、Log）
 	AppConfig::Instance();

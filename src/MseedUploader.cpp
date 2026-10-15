@@ -1,6 +1,7 @@
 #include "MseedUploader.h"
 #include "AppConfig.h"
 #include "LogManage.h"
+#include "DeviceIdentity.h"
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
@@ -45,9 +46,11 @@ void MseedUploader::start(const QString& pickerPath)
 	if (m_started)
 		return;
 	m_started = true;
+	m_deviceId = DeviceIdentity::id();
 	m_pickerPath = pickerPath;
-	// 状态目录与 picker 平级：.../data/picker -> .../data/upload
-	m_stateDir = QDir(QDir(m_pickerPath).absoluteFilePath("../upload")).absolutePath();
+	// Keep resume/done state isolated per device identity. This also prevents a
+	// re-imaged device from inheriting another device's completed-file list.
+	m_stateDir = QDir(QDir(m_pickerPath).absoluteFilePath("../upload/" + m_deviceId)).absolutePath();
 	QDir().mkpath(m_stateDir);
 	loadDoneList();
 	applyFromConfig();
@@ -145,6 +148,7 @@ QString MseedUploader::uploadUrl(const QString& filePath) const
 	QUrlQuery query;
 	query.addQueryItem("name",
 		QString::fromUtf8(QUrl::toPercentEncoding(QFileInfo(filePath).fileName())));
+	query.addQueryItem("device_id", m_deviceId);
 	url.setQuery(query);
 	return url.toString();
 }
@@ -184,6 +188,7 @@ void MseedUploader::startHead(const QString& filePath)
 	QNetworkRequest request(uploadUrl(filePath));
 	if (!m_uploadToken.isEmpty())
 		request.setRawHeader("X-Upload-Token", m_uploadToken);
+	request.setRawHeader("X-Device-ID", m_deviceId.toUtf8());
 	QNetworkReply* reply = m_nam->head(request);
 	m_reply = reply;
 	connect(reply, &QNetworkReply::finished, this, [this, reply, filePath]() {
@@ -245,6 +250,7 @@ void MseedUploader::startChunk(const QString& filePath, qint64 offset)
 	request.setHeader(QNetworkRequest::ContentTypeHeader, "application/octet-stream");
 	if (!m_uploadToken.isEmpty())
 		request.setRawHeader("X-Upload-Token", m_uploadToken);
+	request.setRawHeader("X-Device-ID", m_deviceId.toUtf8());
 	request.setRawHeader("Content-Range",
 		QStringLiteral("bytes %1-%2/%3").arg(offset).arg(end).arg(total).toUtf8());
 	QNetworkReply* reply = m_nam->put(request, chunk);

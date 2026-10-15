@@ -1,0 +1,15 @@
+#ifndef DEVICEIDENTITY_H
+#define DEVICEIDENTITY_H
+
+#include <QString>
+
+namespace DeviceIdentity {
+
+inline QString id()
+{
+    return QStringLiteral("@MINICOLLECTION_DEVICE_ID@");
+}
+
+} // namespace DeviceIdentity
+
+#endif // DEVICEIDENTITY_H

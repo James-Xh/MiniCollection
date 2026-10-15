@@ -6,6 +6,7 @@
 #include "AppConfig.h"
 #include "LogManage.h"
 #include "MseedUploader.h"
+#include "DeviceIdentity.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -20,7 +21,7 @@ StatusWindow::StatusWindow(QWidget* parent)
 	: QWidget(parent)
 {
 	memset(m_online, 0, sizeof(m_online));
-	setWindowTitle(QStringLiteral("微震数据采集"));
+	setWindowTitle(QStringLiteral("微震数据采集 - 设备 %1").arg(DeviceIdentity::id()));
 	resize(860, 560);
 
 	m_table = new QTableWidget(this);
@@ -32,7 +33,8 @@ StatusWindow::StatusWindow(QWidget* parent)
 	m_table->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
 	m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
 
-	m_syncLabel = new QLabel(QStringLiteral("同步状态: 等待数据"), this);
+	m_syncLabel = new QLabel(QStringLiteral("设备编号: %1    同步状态: 等待数据")
+		.arg(DeviceIdentity::id()), this);
 
 	m_log = new QPlainTextEdit(this);
 	m_log->setReadOnly(true);
@@ -168,8 +170,9 @@ void StatusWindow::onPickerSyncStatus(int state, qint64 maxDiffUs,
 	Q_UNUSED(stationId);
 	QString stateStr = (state == 1) ? QStringLiteral("同步正常")
 		: (state == 2) ? QStringLiteral("同步异常") : QStringLiteral("等待数据");
-	m_syncLabel->setText(QStringLiteral("同步状态: %1 (最大时间差 %2 ms) - %3")
-		.arg(stateStr).arg(maxDiffUs / 1000.0, 0, 'f', 1).arg(message));
+	m_syncLabel->setText(QStringLiteral("设备编号: %1    同步状态: %2 (最大时间差 %3 ms) - %4")
+		.arg(DeviceIdentity::id()).arg(stateStr)
+		.arg(maxDiffUs / 1000.0, 0, 'f', 1).arg(message));
 }
 
 void StatusWindow::onPickerNewFile(const QString& file)
