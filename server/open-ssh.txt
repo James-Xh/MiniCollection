@@ -1,0 +1,8 @@
+sudo ip link set eth0 nomaster
+sudo ip addr add 192.168.111.2/24 dev eth0 2>/dev/null
+sudo ip link set eth0 up
+sudo iptables -F
+sudo mkdir -p /run/sshd
+sudo systemctl restart ssh
+
+

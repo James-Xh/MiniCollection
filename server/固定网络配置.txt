@@ -1,0 +1,54 @@
+After=network-online.target
+Before=ssh.service sshd.service minicollection.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/eg628-network-init.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+让原有的程序服务等待网络配置完成：
+mkdir -p /etc/systemd/system/minicollection.service.d
+
+tee /etc/systemd/system/minicollection.service.d/network.conf >/dev/null <<'EOF'
+[Unit]
+Requires=eg628-network.service
+After=eg628-network.service
+EOF
+加载并启用服务：
+systemctl daemon-reload
+systemctl enable eg628-network.service
+systemctl enable ssh.service
+systemctl enable minicollection.service
+第一次手动测试：
+systemctl start eg628-network.service
+systemctl restart ssh.service
+检查结果：
+systemctl --no-pager --full status eg628-network.service
+ip -4 addr show dev eth0
+ip link show dev eth0
+ss -lntp | grep ':22'
+应该能够看到：
+inet 192.168.111.2/24
+并且 eth0 的信息中不应再出现类似：
+master br0
+SSH 应监听 TCP 22：
+LISTEN ... 0.0.0.0:22
+然后在 Windows 上测试：
+ssh root@192.168.111.2
+最后重启验证：
+reboot
+设备启动完成后再次从 Windows 连接：
+ssh root@192.168.111.2
+如果重启后 eth0 又被自动加入某个网桥，说明设备上还有 NetworkManager、systemd-networkd、Netplan 或厂家网络脚本在重新配置它。用下面的命令确认是谁管理网卡：
+systemctl is-active NetworkManager
+systemctl is-active systemd-networkd
+networkctl status eth0 2>/dev/null
+nmcli device status 2>/dev/null
+ip -d link show eth0
+这种情况下应该进一步修改对应的持久网络配置，避免它把 eth0 加回网桥。不过上面的 eg628-network.service 已安排在 network-online.target 之后执行，通常足以覆盖启动阶段的网络配置。
+另外，这套配置没有设置默认网关，因为 192.168.111.2/24 看起来是电脑与目标机之间的直连管理网络。如果目标机还需要通过 eth0 访问互联网，并且电脑端地址是 192.168.111.1，可以在脚本中 ip addr replace 后面增加：
+ip route replace default via 192.168.111.1 dev eth0
+只有确认 192.168.111.1 确实承担网关/NAT 时才添加，否则可能覆盖设备现有的正确默认路由。

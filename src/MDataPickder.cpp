@@ -11,6 +11,7 @@
 #include <QTextStream>
 #include <QDateTime>
 #include <limits>
+#include <QSettings>
 #include "HttpMgr.h"
 #include "TcpDataManager.h"
 
@@ -56,22 +57,9 @@ MDataPickder::MDataPickder(QObject *parent)
 	if (m_nStationCount > MAX_STATION)
 		m_nStationCount = MAX_STATION;
 
-	//m_demo_eventp.Method = 0;
-	m_demo_eventp.tri_on = AppConfig::Instance()->getConfig("Para", "tri_on").toFloat();
-	m_demo_eventp.tri_off = AppConfig::Instance()->getConfig("Para", "tri_off").toFloat();
-	m_demo_eventp.nsta = AppConfig::Instance()->getConfig("Para", "nsta").toInt();
-	m_demo_eventp.nlta = AppConfig::Instance()->getConfig("Para", "nlta").toInt();
-
-	m_demo_eventp.detect_ch = AppConfig::Instance()->getConfig("Para", "detect_ch").toInt();
-	m_demo_eventp.qualified_ch = AppConfig::Instance()->getConfig("Para", "qualified_ch").toInt();
-	m_demo_eventp.energy_thre = AppConfig::Instance()->getConfig("Para", "energy_thre").toFloat();
-	m_demo_eventp.amp_thre = AppConfig::Instance()->getConfig("Para", "amp_thre").toFloat();
-	m_demo_eventp.intrach_offset = AppConfig::Instance()->getConfig("Para", "intrach").toInt();
-	m_demo_eventp.interch_offset = AppConfig::Instance()->getConfig("Para", "interch").toInt();
 	m_demo_eventp.SF = 500;
-
-	m_nCalcWin = 2500;// AppConfig::Instance()->getConfig("Para", "calc_win_len").toInt();
-	m_nCalcWin += m_demo_eventp.nlta;
+	m_nCalcWin = 2500; // callPickder adds nlta exactly once.
+	reloadParameters();
 }
 
 MDataPickder::~MDataPickder()
@@ -678,80 +666,52 @@ void MDataPickder::slot_loginOut()
 	clearAllState();
 }
 
+void MDataPickder::reloadParameters()
+{
+	// A separate QSettings instance belongs to this thread; never share the UI's instance.
+	QSettings settings(AppConfig::Instance()->configFilePath(), QSettings::IniFormat);
+	settings.sync();
+	Event_Para next = m_demo_eventp;
+	next.tri_on = settings.value("Para/tri_on").toFloat();
+	next.tri_off = settings.value("Para/tri_off").toFloat();
+	next.nsta = settings.value("Para/nsta").toInt();
+	next.nlta = settings.value("Para/nlta").toInt();
+	next.detect_ch = settings.value("Para/detect_ch").toInt();
+	next.qualified_ch = settings.value("Para/qualified_ch").toInt();
+	next.energy_thre = settings.value("Para/energy_thre").toFloat();
+	next.amp_thre = settings.value("Para/amp_thre").toFloat();
+	next.intrach_offset = settings.value("Para/intrach").toInt();
+	next.interch_offset = settings.value("Para/interch").toInt();
+	const bool changed =
+		next.tri_on != m_demo_eventp.tri_on ||
+		next.tri_off != m_demo_eventp.tri_off ||
+		next.nsta != m_demo_eventp.nsta ||
+		next.nlta != m_demo_eventp.nlta ||
+		next.detect_ch != m_demo_eventp.detect_ch ||
+		next.qualified_ch != m_demo_eventp.qualified_ch ||
+		next.energy_thre != m_demo_eventp.energy_thre ||
+		next.amp_thre != m_demo_eventp.amp_thre ||
+		next.intrach_offset != m_demo_eventp.intrach_offset ||
+		next.interch_offset != m_demo_eventp.interch_offset;
+	if (!changed) return;
+	// Discard an unfinished pick and aligned caches to avoid mixing parameter sets.
+	// Raw station streams and network connections remain intact.
+	resetCalculationState(false);
+	next.prev_state = 0;
+	m_demo_eventp = next;
+	emit CallManage::getInstance()->sig_addLog("Parameters",
+		QStringLiteral("算法参数已整组运行时应用；拾取缓存已重置，未闭合事件重新计算"));
+}
+
 Q_INVOKABLE void MDataPickder::changeCallcValue(int ntag, QString strv)
 {
-	QMutexLocker locker(&m_mutex);
-
-	QStringList slist = { "tri_on","tri_off","nsta","nlta","calc_win_len",
-		"detect_ch",	//5
-		" ",
-		"qualified_ch", //7
-		"energy_thre","amp_thre","intrach" ,"interch" };
-	if (ntag >= 0 && ntag < slist.size())
-	{
-		AppConfig::Instance()->setConfig("Para", slist.at(ntag), strv);
-	}
-
-	// 信号开始阈值:
-	if (0 == ntag)
-	{
-		m_demo_eventp.tri_on = strv.toDouble();
-	}
-	// 信号结束阈值::
-	else if (1 == ntag)
-	{
-		m_demo_eventp.tri_off = strv.toDouble();
-	}
-	// 短窗长度(样点数)::
-	else if (2 == ntag)
-	{
-		m_demo_eventp.nsta = strv.toInt();
-	}
-	// 长窗长度(样点数)::
-	else if (3 == ntag)
-	{
-		m_demo_eventp.nlta = strv.toInt();
-	}
-	// 计算窗口长度(样点数)::
-	else if (4 == ntag)
-	{
-		m_nCalcWin = strv.toInt();// +m_demo_eventp.nlta;
-	}
-	// 触发达标的最小通道数::
-	else if (5 == ntag)
-	{
-		m_demo_eventp.detect_ch = strv.toInt();
-	}
-	// 振幅达标的最小通道数::
-	//else if (6 == ntag)
-	//{
-	//	m_demo_eventp.M2 = strv.toInt();
-	//}
-	// 限制达标最小通道数:
-	else if (7 == ntag)
-	{
-		m_demo_eventp.qualified_ch = strv.toInt();
-	}
-	// 能量限制:
-	else if (8 == ntag)
-	{
-		m_demo_eventp.energy_thre = strv.toDouble();
-	}
-	// 强度限制:
-	else if (9 == ntag)
-	{
-		m_demo_eventp.amp_thre = strv.toDouble();
-	}
-	// 单通道相位间隔点数:
-	else if (10 == ntag)
-	{
-		m_demo_eventp.intrach_offset = strv.toDouble();
-	}
-	// 多通道相位间隔点数:
-	else if (11 == ntag)
-	{
-		m_demo_eventp.interch_offset = strv.toDouble();
-	}
+	// Compatibility entry point. The next timer tick applies the entire saved group.
+	static const QStringList keys = { "tri_on", "tri_off", "nsta", "nlta", "",
+		"detect_ch", "", "qualified_ch", "energy_thre", "amp_thre", "intrach", "interch" };
+	if (ntag < 0 || ntag >= keys.size() || keys.at(ntag).isEmpty()) return;
+	QSettings settings(AppConfig::Instance()->configFilePath(), QSettings::IniFormat);
+	settings.setValue("Para/" + keys.at(ntag), strv);
+	settings.sync();
 }
 
 Q_INVOKABLE void MDataPickder::setValue(int ndmx)
@@ -1378,6 +1338,7 @@ void MDataPickder::onCalcTimeout()
 	QMutexLocker locker(&m_mutex);
 	try
 	{
+		reloadParameters();
 		evaluateSyncCoverage(QDateTime::currentMSecsSinceEpoch());
 		// 调用算法
 		callPickder();

@@ -198,14 +198,9 @@ void StatusWindow::onApplyParams()
 		if (!edit) continue;
 		const QString value = edit->text().trimmed();
 		AppConfig::Instance()->setConfig("Para", name, value);
-		if (m_pickder) {
-			QMetaObject::invokeMethod(m_pickder, "changeCallcValue",
-				Qt::QueuedConnection,
-				Q_ARG(int, tag), Q_ARG(QString, value));
-		}
 	}
 	AppConfig::Instance()->syncConfig();
-	m_log->appendPlainText(QStringLiteral("[设置] 算法参数已应用"));
+	m_log->appendPlainText(QStringLiteral("[设置] 参数已保存，算法线程将在下一次计算前整组读取；应用结果见 Parameters 日志"));
 }
 
 void StatusWindow::onApplyUploadSettings()

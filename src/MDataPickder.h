@@ -132,6 +132,7 @@ private slots:
 	void slot_loginOut();
 
 private:
+	void reloadParameters(); // Called only in the picker thread, between calculations.
 	struct StationStream {
 		QVector<float> z;
 		QVector<float> x;
@@ -201,7 +202,7 @@ private:
 	static const qint64 kSyncAlarmDelayMs = 1000;
 	static const int kRecoveryGroups = 3;
 
-	Event_Para m_demo_eventp;
+	Event_Para m_demo_eventp{};
 	int ChNum = MSEED_CHAN;
 	float SF = 500.00f;
 
