@@ -2,7 +2,7 @@
 
 ## 目标
 
-- MiniCollection 自动扫描 `data/picker/*.mseed` 并分片上传；
+- MiniCollection 自动扫描 `data/picker/*.mseed`，按设备编号分片上传；
 - 网络中断或进程重启后从服务端实际偏移继续；
 - 只有完整文件会对下载端可见；
 - 消费程序使用数据库 `id` 游标顺序获取，不重复、不漏取；
@@ -134,9 +134,10 @@ curl http://服务器IP/healthz
 当前客户端已支持：
 
 ```text
-HEAD /coalmine/mseed/upload?name=文件名
-PUT  /coalmine/mseed/upload?name=文件名
+HEAD /coalmine/mseed/upload?device_id=01&name=文件名
+PUT  /coalmine/mseed/upload?device_id=01&name=文件名
 Content-Range: bytes start-end/total
+X-Device-ID: 01
 ```
 
 配置文件 `/opt/MiniCollection/data/Config.ini`：
@@ -149,14 +150,15 @@ token=与服务器MSEED_UPLOAD_TOKEN相同的上传令牌
 pollSec=5
 ```
 
-客户端会在 HEAD 和 PUT 请求中发送 `X-Upload-Token`。修改配置后重启
+设备编号由编译参数 `MINICOLLECTION_DEVICE_ID` 固定，客户端在 HEAD 和 PUT 请求中同时发送
+`device_id` 查询参数和 `X-Device-ID` 请求头。客户端也会发送 `X-Upload-Token`。修改配置后重启
 `minicollection.service` 使 token 生效。若将服务器 token 留空会关闭认证，只适用于隔离的可信内网。
 
 上传状态保存在目标机：
 
 ```text
-/opt/MiniCollection/data/upload/progress.ini
-/opt/MiniCollection/data/upload/done.txt
+/opt/MiniCollection/data/upload/01/progress.ini
+/opt/MiniCollection/data/upload/01/done.txt
 ```
 
 服务端以 `X-Uploaded-Bytes` 为权威偏移，网络恢复后会从服务器实际长度继续上传。
@@ -167,7 +169,8 @@ pollSec=5
 2. PUT 必须从服务器当前偏移开始，否则返回 HTTP 409 和正确偏移。
 3. 每个分片写入后执行 `fsync`。
 4. 最后一片完成后计算 SHA-256。
-5. 使用 `os.replace()` 从 `parts/*.part` 原子移动到 `files/`。
+5. 使用 `os.replace()` 从 `parts/设备编号/*.part` 原子移动到
+   `files/设备编号/`。
 6. 原子移动完成后才写入 SQLite，因此下载接口不会看到半文件。
 7. 文件名为上传幂等键；同名不同大小返回 409，避免静默覆盖。
 
@@ -179,7 +182,7 @@ pollSec=5
 
 ```bash
 curl -H 'X-Download-Token: 下载令牌' \
-  'https://你的域名/coalmine/mseed/next?after_id=0'
+  'https://你的域名/coalmine/mseed/01/next?after_id=0'
 ```
 
 有文件时返回：
@@ -187,11 +190,12 @@ curl -H 'X-Download-Token: 下载令牌' \
 ```json
 {
   "id": 101,
+  "device_id": "01",
   "name": "example.mseed",
   "size": 123456,
   "sha256": "...",
   "created_at": "2026-09-28 10:00:00",
-  "download_url": "https://你的域名/coalmine/mseed/files/101/example.mseed"
+  "download_url": "https://你的域名/coalmine/mseed/01/files/101/example.mseed"
 }
 ```
 
@@ -220,7 +224,7 @@ curl --fail --location \
 幂等；这样不会丢文件。业务处理完成才推进游标，可实现“至少一次传递”；业务侧用 `id` 唯一键
 可达到效果上的不重复处理。
 
-`GET /coalmine/mseed/latest` 只适合查看当前最新文件，不适合可靠消费，因为轮询间隔内产生多个
+`GET /coalmine/mseed/01/latest` 只适合查看当前最新文件，不适合可靠消费，因为轮询间隔内产生多个
 文件时可能跳过中间文件。
 
 ## 八、运维检查
@@ -230,15 +234,122 @@ sudo systemctl status mseed-server.service
 sudo journalctl -u mseed-server.service -n 100 --no-pager
 sudo du -sh /var/lib/mseed-server
 sudo sqlite3 /var/lib/mseed-server/mseed.db \
-  'select id,name,size,sha256,created_at from files order by id desc limit 10;'
+  'select id,device_id,name,size,sha256,created_at from files order by id desc limit 10;'
 ```
 
 备份时同时备份：
 
 ```text
-/var/lib/mseed-server/files/
+/var/lib/mseed-server/files/设备编号/
 /var/lib/mseed-server/mseed.db
 ```
 
 不要把 `parts/` 中的 `.part` 文件提供给下载端。可以定期清理长期没有更新且确认客户端不再续传
 的 `.part`，但不能在上传期间删除。
+
+## 九、从旧版服务器升级
+
+升级前先备份数据库和文件目录，然后替换服务程序：
+
+```bash
+sudo systemctl stop mseed-server.service
+sudo cp -a /var/lib/mseed-server /var/lib/mseed-server.backup-$(date +%Y%m%d-%H%M%S)
+sudo install -o root -g root -m 644 mseed_server.py /opt/mseed-server/mseed_server.py
+sudo install -o root -g root -m 644 nginx-mseed.conf /etc/nginx/sites-available/mseed-server
+sudo nginx -t
+sudo systemctl start mseed-server.service
+sudo systemctl reload nginx.service
+sudo systemctl --no-pager --full status mseed-server.service
+```
+
+首次启动会自动为 `files` 表增加 `device_id`，将旧记录归入设备 `01`，并将旧的平铺文件和
+未完成分片分别移动到 `files/01/`、`parts/01/`。迁移后检查：
+
+```bash
+sudo find /var/lib/mseed-server/files -maxdepth 2 -type f | head
+sudo sqlite3 /var/lib/mseed-server/mseed.db \
+  'select device_id,count(*) from files group by device_id;'
+curl -H 'X-Download-Token: 下载令牌' \
+  'http://127.0.0.1:9001/coalmine/mseed/01/next?after_id=0'
+```
+
+旧的 `/coalmine/mseed/next`、`latest`、`files` 下载接口仍兼容设备 `01`。新控制台应使用包含
+设备编号的规范接口，且每台设备分别保存自己的消费游标。
+
+## 十、设备配置和运行状态接口
+
+控制台创建设备：
+
+```http
+PUT /coalmine/devices/02
+Content-Type: application/json
+
+{"name":"EG628-02"}
+```
+
+控制台提交完整配置。服务器为每台设备独立生成递增版本号：
+
+```http
+PUT /coalmine/devices/02/config
+Content-Type: application/json
+
+{
+  "parameters": {
+    "tri_on": 5.5, "tri_off": 2,
+    "nsta": 50, "nlta": 500,
+    "detect_ch": 1, "qualified_ch": 1,
+    "energy_thre": 0.25, "amp_thre": 0.25,
+    "intrach": 100, "interch": 250
+  },
+  "upload_server_url": "http://39.96.41.239:443"
+}
+```
+
+EG628 每隔固定时间请求新版本；版本没有变化时返回 HTTP 204：
+
+```http
+GET /coalmine/devices/02/config/latest?after_version=3
+```
+
+EG628 在算法线程真正应用完整参数快照后回报结果：
+
+```http
+POST /coalmine/devices/02/config/applied
+Content-Type: application/json
+
+{"version":4,"success":true,"message":"runtime applied"}
+```
+
+EG628 定期提交运行状态：
+
+```http
+POST /coalmine/devices/02/heartbeat
+Content-Type: application/json
+
+{
+  "program_running": true,
+  "program_version": "1.0.0",
+  "network_state": "online",
+  "local_ip": "192.168.111.2",
+  "applied_config_version": 4,
+  "stations": [{
+    "station_number": 1,
+    "connected": true,
+    "online_channels": 12,
+    "total_channels": 16,
+    "gps": 5
+  }]
+}
+```
+
+控制台使用以下接口展示状态：
+
+```text
+GET    /coalmine/devices
+GET    /coalmine/devices/02
+GET    /coalmine/devices/02/config/status
+DELETE /coalmine/devices/02
+```
+
+设备超过 30 秒没有心跳时，查询结果中的 `online` 为 `false`。删除设备采用停用方式，历史配置和
+mseed 文件不会被删除；设备再次发送心跳时会恢复启用。

@@ -714,6 +714,39 @@ Q_INVOKABLE void MDataPickder::changeCallcValue(int ntag, QString strv)
 	settings.sync();
 }
 
+Q_INVOKABLE void MDataPickder::applyRemoteParameters(QVariantMap parameters, int version)
+{
+	QMutexLocker locker(&m_mutex);
+	Event_Para next = m_demo_eventp;
+	next.tri_on = parameters.value("tri_on").toFloat();
+	next.tri_off = parameters.value("tri_off").toFloat();
+	next.nsta = parameters.value("nsta").toInt();
+	next.nlta = parameters.value("nlta").toInt();
+	next.detect_ch = parameters.value("detect_ch").toInt();
+	next.qualified_ch = parameters.value("qualified_ch").toInt();
+	next.energy_thre = parameters.value("energy_thre").toFloat();
+	next.amp_thre = parameters.value("amp_thre").toFloat();
+	next.intrach_offset = parameters.value("intrach").toInt();
+	next.interch_offset = parameters.value("interch").toInt();
+	next.prev_state = 0;
+
+	QSettings settings(AppConfig::Instance()->configFilePath(), QSettings::IniFormat);
+	for (auto it = parameters.constBegin(); it != parameters.constEnd(); ++it)
+		settings.setValue("Para/" + it.key(), it.value());
+	settings.sync();
+	if (settings.status() != QSettings::NoError) {
+		emit remoteParametersApplied(version, false,
+			QStringLiteral("Config.ini 写入失败"));
+		return;
+	}
+
+	resetCalculationState(false);
+	m_demo_eventp = next;
+	emit CallManage::getInstance()->sig_addLog("Parameters",
+		QStringLiteral("服务器参数版本 %1 已运行时应用").arg(version));
+	emit remoteParametersApplied(version, true, QStringLiteral("runtime applied"));
+}
+
 Q_INVOKABLE void MDataPickder::setValue(int ndmx)
 {
 	m_nDmx = ndmx;

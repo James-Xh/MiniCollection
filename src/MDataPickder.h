@@ -7,6 +7,7 @@
 #include <QMap>
 #include <QSet>
 #include <QVector>
+#include <QVariantMap>
 
 #include "picker.h"
 //#include "mydll.h"
@@ -117,10 +118,14 @@ public:
 		int sampleCount, int sampleRate, quint64 packageNo);
 
 	Q_INVOKABLE void changeCallcValue(int ntag, QString strv);
+	Q_INVOKABLE void applyRemoteParameters(QVariantMap parameters, int version);
 
 	Q_INVOKABLE void setValue(int ndmx);
 
 	bool callPickder();
+
+signals:
+	void remoteParametersApplied(int version, bool success, QString message);
 
 private slots:
 	void onCalcTimeout();

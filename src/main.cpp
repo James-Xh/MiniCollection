@@ -14,6 +14,7 @@
 #include "MseedUploader.h"
 #include "StatusWindow.h"
 #include "DeviceIdentity.h"
+#include "DeviceSyncAgent.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <QThread>
@@ -55,6 +56,7 @@ int main(int argc, char* argv[])
 {
 	QApplication a(argc, argv);
 	a.setApplicationName("MiniCollection");
+	a.setApplicationVersion(QStringLiteral("1.0.0"));
 	qInfo() << "MiniCollection device identity:" << DeviceIdentity::id();
 
 	// 初始化配置与目录（data/Config.ini、data/temp、data/picker、data/bins、Log）
@@ -106,6 +108,8 @@ int main(int argc, char* argv[])
 
 	// mseed 事件文件网络上传（picker -> HTTP 服务端，支持断点续传；[Upload] 未启用时空转）
 	MseedUploader::Instance()->start(AppConfig::Instance()->getPickerPath());
+	DeviceSyncAgent* deviceSync = new DeviceSyncAgent(pickder, &a);
+	deviceSync->start();
 
 	// 组装数据流：TCP帧 -> 解析 -> 算法/写文件
 	QObject::connect(CallManage::getInstance(), &CallManage::sig_tcpData,
