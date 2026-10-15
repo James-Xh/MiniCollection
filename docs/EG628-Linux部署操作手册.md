@@ -529,3 +529,128 @@ nmcli connection up eg628-eth0
 
 如果已有同名连接，使用 `nmcli connection modify` 修改它，不要重复创建。固定 IP 配置完成
 后，SSH 将在每次开机自动恢复；`minicollection.service` 会在网络目标达到后启动。
+
+## 十二、编译时固定设备编号
+
+每台 EG628 必须使用唯一设备编号，例如 `01`、`02`。编号在编译时写入程序并保留前导零，不能在
+目标机的 `Config.ini` 中修改。
+
+第一次为设备 `01` 配置已有构建目录：
+
+```bash
+source "$HOME/.bashrc"
+cd "$HOME/work/MiniCollection"
+
+cmake -S . -B build-eg628-qt6 \
+  -DQT_HOST_MOC="$HOME/bin/moc-eg628" \
+  -DMINICOLLECTION_DEVICE_ID=01 \
+  -DCMAKE_BUILD_TYPE=Release
+
+cmake --build build-eg628-qt6 --parallel "$(nproc)"
+```
+
+现有 `build-eg628-qt6` 已缓存工具链、sysroot 和 Qt 路径，不要在环境变量为空时重新创建构建目录。
+检查生成的身份：
+
+```bash
+grep MINICOLLECTION_DEVICE_ID build-eg628-qt6/CMakeCache.txt
+grep QStringLiteral build-eg628-qt6/DeviceIdentity.h
+```
+
+应分别显示 `01`。同一构建目录改成设备 `02` 会覆盖上次的编译身份；批量维护设备时应为每个编号
+建立独立且已正确配置 Qt/sysroot 的构建目录。
+
+## 十三、云端上传、参数同步和状态心跳
+
+目标机 `/opt/MiniCollection/data/Config.ini` 至少包含：
+
+```ini
+[Upload]
+enabled=1
+pollSec=5
+serverUrl=http://39.96.41.239:443
+token=服务器上传令牌
+```
+
+`serverUrl` 同时用于 mseed 上传、参数拉取和状态心跳。程序每 10 秒执行一次配置查询和状态上报：
+
+- 从 `/coalmine/devices/设备编号/config/latest` 获取最新配置；
+- 在算法线程计算边界整组应用 `[Para]`，不重启程序；
+- 将已应用版本写入 `[Remote] appliedConfigVersion`；
+- 向服务器上报设备 IP、程序版本、各站连接、在线通道和 GPS 状态；
+- 应用回执因断网失败时自动重试。
+
+mseed 在服务器按设备保存到 `files/01/`、`files/02/` 等目录；目标机本地上传状态也按设备保存在：
+
+```text
+/opt/MiniCollection/data/upload/01/progress.ini
+/opt/MiniCollection/data/upload/01/done.txt
+```
+
+## 十四、443 端口检查
+
+当前部署是明文 HTTP 运行在 443 端口，不是 HTTPS。服务器 Nginx 必须包含：
+
+```nginx
+listen 80;
+listen 443;
+```
+
+服务器检查：
+
+```bash
+sudo nginx -t
+sudo systemctl reload nginx
+sudo ss -lntp | grep ':443'
+curl http://127.0.0.1:443/healthz
+```
+
+EG628 检查：
+
+```bash
+curl -v --connect-timeout 10 http://39.96.41.239:443/healthz
+curl -v --connect-timeout 10 http://39.96.41.239:443/coalmine/devices/01
+```
+
+如果日志出现 `HTTP=0 Connection refused`，说明 TCP 端口未监听或被防火墙/安全组拒绝，不是参数
+接口错误。确认 Nginx、系统防火墙和云安全组均开放 TCP 443。地址必须以 `http://` 开头。
+
+## 十五、当前版本完整更新流程
+
+编译机执行：
+
+```bash
+source "$HOME/.bashrc"
+cd "$HOME/work/MiniCollection"
+
+cmake -S . -B build-eg628-qt6 \
+  -DQT_HOST_MOC="$HOME/bin/moc-eg628" \
+  -DMINICOLLECTION_DEVICE_ID=01 \
+  -DCMAKE_BUILD_TYPE=Release
+
+cmake --build build-eg628-qt6 --parallel "$(nproc)"
+
+scp build-eg628-qt6/MiniCollection \
+    build-eg628-qt6/MiniWatchdog \
+    root@192.168.111.2:/tmp/
+```
+
+目标机替换并验证：
+
+```bash
+systemctl stop minicollection.service
+install -o root -g root -m 755 /tmp/MiniCollection /opt/MiniCollection/MiniCollection
+install -o root -g root -m 755 /tmp/MiniWatchdog /opt/MiniCollection/MiniWatchdog
+systemctl start minicollection.service
+
+systemctl --no-pager --full status minicollection.service
+journalctl -u minicollection.service -n 100 --no-pager
+```
+
+等待约 10 秒后在服务器检查设备状态：
+
+```bash
+curl http://127.0.0.1:9001/coalmine/devices/01
+```
+
+应看到 `online:true`，并包含 `status.stations`、`applied_config_version` 等字段。

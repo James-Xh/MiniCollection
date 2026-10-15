@@ -376,15 +376,17 @@ def get_device_config_status(device_id: str):
     identity = safe_device_id(device_id)
     with database() as conn:
         row = conn.execute(
-            """SELECT version, created_at, pulled_at, applied_at,
-                      apply_status, apply_message
+            """SELECT version, parameters_json, upload_server_url,
+                      created_at, pulled_at, applied_at, apply_status, apply_message
                FROM device_configs WHERE device_id = ?
                ORDER BY version DESC LIMIT 1""",
             (identity,),
         ).fetchone()
     if not row:
         return Response(status_code=204)
-    return dict(row)
+    result = dict(row)
+    result["parameters"] = json.loads(result.pop("parameters_json"))
+    return result
 
 
 @app.post("/coalmine/devices/{device_id}/config/applied")
