@@ -79,7 +79,7 @@ void AppConfig::initDirs()
     createUnexistDir(getPickerPath());      //算法拾取到的
     createUnexistDir(getBinsPath());        //连续存储路径
 
-	// 备用机数据补齐默认配置（首次运行时写入默认值，可在Config.ini中修改）
+	// 首次运行时补齐默认配置；已有值始终保留，便于现场覆盖。
 	if (!m_pSetting->contains("/BackupMachine/ip"))
 		m_pSetting->setValue("/BackupMachine/ip", "");
 	if (!m_pSetting->contains("/BackupMachine/sharePath"))
@@ -88,6 +88,16 @@ void AppConfig::initDirs()
 		m_pSetting->setValue("/BackupMachine/localPath", getPickerPath());
 	if (!m_pSetting->contains("/BackupMachine/lastMseedTime"))
 		m_pSetting->setValue("/BackupMachine/lastMseedTime", "");
+
+	// mseed 网络上传默认启用。服务器地址可在界面或 Config.ini 中修改。
+	if (!m_pSetting->contains("/Upload/enabled"))
+		m_pSetting->setValue("/Upload/enabled", 1);
+	if (!m_pSetting->contains("/Upload/serverUrl"))
+		m_pSetting->setValue("/Upload/serverUrl", "http://39.96.41.239:443");
+	if (!m_pSetting->contains("/Upload/pollSec"))
+		m_pSetting->setValue("/Upload/pollSec", 5);
+	if (!m_pSetting->contains("/Upload/token"))
+		m_pSetting->setValue("/Upload/token", "");
 }
 
 void AppConfig::createUnexistDir(const QString &path)
