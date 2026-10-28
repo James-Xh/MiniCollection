@@ -96,7 +96,7 @@ ConsumerWindow::ConsumerWindow(QWidget* parent) : QMainWindow(parent),
     m_deviceStatus=new QLabel("-",statusPage);m_deviceIp=new QLabel("-",statusPage);m_programVersion=new QLabel("-",statusPage);m_configVersion=new QLabel("-",statusPage);m_lastSeen=new QLabel("-",statusPage);
     df->addRow(QStringLiteral("设备状态"),m_deviceStatus);df->addRow(QStringLiteral("最后心跳"),m_lastSeen);df->addRow(QStringLiteral("设备IP"),m_deviceIp);df->addRow(QStringLiteral("程序版本"),m_programVersion);df->addRow(QStringLiteral("配置版本"),m_configVersion);sl->addLayout(df);
     m_stationHint=new QLabel(QString(),statusPage);m_stationHint->setWordWrap(true);m_stationHint->setStyleSheet(QStringLiteral("color:#8a5a00;"));sl->addWidget(m_stationHint);
-    m_stationTable=new QTableWidget(statusPage);m_stationTable->setColumnCount(5);m_stationTable->setHorizontalHeaderLabels({QStringLiteral("站号"),QStringLiteral("连接"),QStringLiteral("在线通道"),QStringLiteral("总通道"),QStringLiteral("GPS")});m_stationTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);m_stationTable->setEditTriggers(QAbstractItemView::NoEditTriggers);sl->addWidget(m_stationTable);tabs->addTab(statusPage,QStringLiteral("设备状态"));
+    m_stationTable=new QTableWidget(statusPage);m_stationTable->setColumnCount(6);m_stationTable->setHorizontalHeaderLabels({QStringLiteral("站号"),QStringLiteral("IP:port"),QStringLiteral("连接"),QStringLiteral("在线通道"),QStringLiteral("总通道"),QStringLiteral("GPS")});m_stationTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);m_stationTable->setEditTriggers(QAbstractItemView::NoEditTriggers);sl->addWidget(m_stationTable);tabs->addTab(statusPage,QStringLiteral("设备状态"));
     QWidget* parameterPage=new QWidget(tabs);QFormLayout* pf=new QFormLayout(parameterPage);
     const QStringList keys={"tri_on","tri_off","nsta","nlta","detect_ch","qualified_ch","energy_thre","amp_thre","intrach","interch"};
     const QStringList defaults={"5.5","2","50","500","1","1","0.25","0.25","100","250"};
@@ -153,7 +153,10 @@ void ConsumerWindow::showDevice(const QJsonObject& o){
         const QJsonObject s=stations.at(i).toObject();
         QString connected=s.value("connected").toBool()?QStringLiteral("在线"):QStringLiteral("离线");
         if(!online)connected+=QStringLiteral("（快照）");
-        const QStringList values={QString::number(s.value("station_number").toInt()),connected,QString::number(s.value("online_channels").toInt()),QString::number(s.value("total_channels").toInt()),QString::number(s.value("gps").toInt())};
+        const QString ip=s.value("ip").toString();
+        const int port=s.value("port").toInt();
+        const QString endpoint=ip.isEmpty()||port<=0?QStringLiteral("-"):QStringLiteral("%1:%2").arg(ip).arg(port);
+        const QStringList values={QString::number(s.value("station_number").toInt()),endpoint,connected,QString::number(s.value("online_channels").toInt()),QString::number(s.value("total_channels").toInt()),QString::number(s.value("gps").toInt())};
         for(int c=0;c<values.size();++c){
             QTableWidgetItem* item=new QTableWidgetItem(values.at(c));
             if(!online)item->setForeground(QBrush(QColor(130,130,130)));

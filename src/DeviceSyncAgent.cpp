@@ -40,6 +40,8 @@ DeviceSyncAgent::DeviceSyncAgent(MDataPickder* pickder, QObject* parent)
     for (const TcpDataManager::StationCfg& station : stations) {
         StationState state;
         state.channels.fill(false, CHANNEL_COUNT);
+        state.ip = station.ip;
+        state.port = station.port;
         m_stations.insert(station.id, state);
     }
 
@@ -184,6 +186,7 @@ void DeviceSyncAgent::sendHeartbeat()
         int onlineChannels = 0;
         for (bool online : it->channels) if (online) ++onlineChannels;
         stations.append(QJsonObject{{"station_number", it.key() + 1},
+            {"ip", it->ip}, {"port", static_cast<int>(it->port)},
             {"connected", it->connected}, {"online_channels", onlineChannels},
             {"total_channels", CHANNEL_COUNT}, {"gps", it->gps}});
     }

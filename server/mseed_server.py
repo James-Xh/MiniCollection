@@ -52,6 +52,8 @@ class DeviceRequest(BaseModel):
 
 class StationStatus(BaseModel):
     station_number: int
+    ip: str = ""
+    port: int = 0
     connected: bool
     online_channels: int
     total_channels: int

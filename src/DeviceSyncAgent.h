@@ -31,6 +31,8 @@ private:
         bool connected = false;
         QVector<bool> channels;
         int gps = 0;
+        QString ip;
+        quint16 port = 0;
     };
 
     QString serverUrl() const;

@@ -67,6 +67,8 @@ class MseedServerTest(unittest.TestCase):
             "applied_config_version": 1,
             "stations": [{
                 "station_number": 1,
+                "ip": "192.168.111.10",
+                "port": 5000,
                 "connected": True,
                 "online_channels": 12,
                 "total_channels": 16,
@@ -80,6 +82,8 @@ class MseedServerTest(unittest.TestCase):
         device = self.client.get("/coalmine/devices/02").json()
         self.assertTrue(device["online"])
         self.assertEqual(device["status"]["stations"][0]["online_channels"], 12)
+        self.assertEqual(device["status"]["stations"][0]["ip"], "192.168.111.10")
+        self.assertEqual(device["status"]["stations"][0]["port"], 5000)
         self.assertEqual(device["applied_config_version"], 1)
 
         body = b"complete-mseed-test"

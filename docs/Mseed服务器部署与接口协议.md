@@ -334,6 +334,8 @@ Content-Type: application/json
   "applied_config_version": 4,
   "stations": [{
     "station_number": 1,
+    "ip": "192.168.111.10",
+    "port": 5000,
     "connected": true,
     "online_channels": 12,
     "total_channels": 16,
