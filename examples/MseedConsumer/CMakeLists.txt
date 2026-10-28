@@ -15,6 +15,10 @@ add_executable(MseedConsumer WIN32
     MseedConsumer.cpp
 )
 
+target_include_directories(MseedConsumer PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+)
+
 target_link_libraries(MseedConsumer PRIVATE Qt5::Core Qt5::Network Qt5::Widgets)
 
 if(MSVC)

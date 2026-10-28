@@ -1,5 +1,7 @@
 ﻿#include "MseedConsumer.h"
 
+#include "NetworkReplyTimeout.h"
+
 #include <QDir>
 #include <QFileInfo>
 #include <QJsonDocument>
@@ -9,6 +11,13 @@
 #include <QSaveFile>
 #include <QUrlQuery>
 #include <QDebug>
+
+namespace {
+// 查询下一个文件是轻量请求；超时后必须让 m_busy 复位，否则消费会永久停住。
+const int kPollTimeoutMs = 20000;
+// 单个事件文件下载的兜底超时，避免半开连接把消费卡死。
+const int kDownloadTimeoutMs = 120000;
+}
 
 MseedConsumer::MseedConsumer(const QUrl& serverUrl,
                              const QByteArray& downloadToken,
@@ -58,7 +67,8 @@ bool MseedConsumer::start()
     m_started = true;
     emit cursorChanged(m_cursor);
     emit statusChanged(QStringLiteral("运行中，等待服务器文件"));
-    emit logMessage(QStringLiteral("消费服务启动，当前游标：%1").arg(m_cursor));
+    emit logMessage(QStringLiteral("消费服务启动，当前游标：%1，服务器：%2，设备：%3")
+                        .arg(m_cursor).arg(m_serverUrl.toString()).arg(m_deviceId));
     scheduleNext(0);
     return true;
 }
@@ -90,12 +100,14 @@ void MseedConsumer::requestNext()
     request.setAttribute(QNetworkRequest::FollowRedirectsAttribute, true);
     m_busy = true;
     QNetworkReply* reply = m_network.get(request);
+    NetTimeout::arm(reply, kPollTimeoutMs);
 
     connect(reply, &QNetworkReply::finished, this, [this, reply]() {
         const int status = reply->attribute(
             QNetworkRequest::HttpStatusCodeAttribute).toInt();
         const QByteArray body = reply->readAll();
         const QNetworkReply::NetworkError error = reply->error();
+        const QString failure = NetTimeout::describeFailure(reply);
         reply->deleteLater();
 
         if (status == 204) {
@@ -105,8 +117,7 @@ void MseedConsumer::requestNext()
             return;
         }
         if (error != QNetworkReply::NoError || status != 200) {
-            fail(QStringLiteral("查询失败: HTTP %1, %2")
-                     .arg(status).arg(reply->errorString()));
+            fail(QStringLiteral("查询失败：%1").arg(failure));
             return;
         }
 
@@ -173,6 +184,7 @@ void MseedConsumer::beginDownload(qint64 id,
     request.setRawHeader("X-Download-Token", m_downloadToken);
     request.setAttribute(QNetworkRequest::FollowRedirectsAttribute, true);
     QNetworkReply* reply = m_network.get(request);
+    NetTimeout::arm(reply, kDownloadTimeoutMs);
 
     connect(reply, &QIODevice::readyRead, this, [this, reply]() {
         const QByteArray data = reply->readAll();
@@ -202,6 +214,8 @@ void MseedConsumer::finishDownload(QNetworkReply* reply)
     const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     const QNetworkReply::NetworkError error = reply->error();
     const QString errorText = reply->errorString();
+    const bool timedOut = NetTimeout::timedOut(reply);
+    const QString downloadUrl = reply->url().toString();
     reply->deleteLater();
 
     const qint64 actualSize = QFileInfo(m_partPath).size();
@@ -210,12 +224,14 @@ void MseedConsumer::finishDownload(QNetworkReply* reply)
     if (error != QNetworkReply::NoError || status != 200 ||
         actualSize != m_expectedSize || actualHash != m_expectedSha256) {
         QFile::remove(m_partPath);
-        fail(QStringLiteral("下载校验失败: %1 HTTP=%2 size=%3/%4 hash=%5/%6 error=%7")
+        fail(QStringLiteral("下载校验失败: %1 HTTP=%2 size=%3/%4 hash=%5/%6 error=%7 url=%8 timeout=%9")
                  .arg(m_pendingName).arg(status)
                  .arg(actualSize).arg(m_expectedSize)
                  .arg(QString::fromLatin1(actualHash))
                  .arg(QString::fromLatin1(m_expectedSha256))
-                 .arg(errorText));
+                 .arg(errorText)
+                 .arg(downloadUrl)
+                 .arg(timedOut ? QStringLiteral("yes") : QStringLiteral("no")));
         return;
     }
 

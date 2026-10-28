@@ -6,6 +6,7 @@
 #include "DeviceIdentity.h"
 #include "MDataPickder.h"
 #include "MseedUploader.h"
+#include "NetworkReplyTimeout.h"
 #include "TcpDataManager.h"
 
 #include <QCoreApplication>
@@ -22,6 +23,11 @@
 
 namespace {
 const int kSyncIntervalMs = 10000;
+// 单次 HTTP 请求的最长等待时间。Qt 5.12 不会自动超时，请求悬挂会让
+// m_configRequestActive / m_heartbeatRequestActive 永久为 true，此后不再发请求。
+const int kRequestTimeoutMs = 15000;
+// 参数交给算法线程后等待应用回执的最长时间，超时就放弃本次版本重新拉取。
+const int kApplyTimeoutMs = 60000;
 }
 
 DeviceSyncAgent::DeviceSyncAgent(MDataPickder* pickder, QObject* parent)
@@ -39,6 +45,9 @@ DeviceSyncAgent::DeviceSyncAgent(MDataPickder* pickder, QObject* parent)
 
     connect(m_configTimer, &QTimer::timeout, this, &DeviceSyncAgent::fetchConfiguration);
     connect(m_heartbeatTimer, &QTimer::timeout, this, &DeviceSyncAgent::sendHeartbeat);
+    m_applyTimer = new QTimer(this);
+    m_applyTimer->setSingleShot(true);
+    connect(m_applyTimer, &QTimer::timeout, this, &DeviceSyncAgent::onApplyTimeout);
     connect(m_pickder, &MDataPickder::remoteParametersApplied,
         this, &DeviceSyncAgent::onRemoteParametersApplied, Qt::QueuedConnection);
     connect(CallManage::getInstance(), &CallManage::sig_staConnectStatus,
@@ -53,6 +62,14 @@ void DeviceSyncAgent::start()
 {
     m_configTimer->start(kSyncIntervalMs);
     m_heartbeatTimer->start(kSyncIntervalMs);
+    if (serverUrl().isEmpty()) {
+        log(QStringLiteral("同步未启用：Config.ini [Upload] serverUrl 为空，"
+                           "参数拉取与状态心跳都不会发出"));
+    }
+    else {
+        log(QStringLiteral("同步已启动：设备 %1，服务器 %2，间隔 %3 秒")
+            .arg(DeviceIdentity::id(), serverUrl()).arg(kSyncIntervalMs / 1000));
+    }
     QTimer::singleShot(0, this, &DeviceSyncAgent::fetchConfiguration);
     QTimer::singleShot(1000, this, &DeviceSyncAgent::sendHeartbeat);
 }
@@ -78,6 +95,7 @@ void DeviceSyncAgent::fetchConfiguration()
     query.addQueryItem("after_version", QString::number(m_appliedVersion));
     url.setQuery(query);
     QNetworkReply* reply = m_network->get(QNetworkRequest(url));
+    NetTimeout::arm(reply, kRequestTimeoutMs);
     connect(reply, &QNetworkReply::finished, this, [this, reply]() {
         m_configRequestActive = false;
         const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
@@ -101,6 +119,7 @@ void DeviceSyncAgent::fetchConfiguration()
         }
         m_networkOnline = true;
         m_pendingVersion = version;
+        m_applyTimer->start(kApplyTimeoutMs);
         const QString uploadUrl = object.value("upload_server_url").toString().trimmed();
         if (!uploadUrl.isEmpty())
             MseedUploader::Instance()->applySettings(true, uploadUrl);
@@ -114,6 +133,7 @@ void DeviceSyncAgent::onRemoteParametersApplied(int version, bool success,
     const QString& message)
 {
     if (version != m_pendingVersion) return;
+    m_applyTimer->stop();
     if (success) {
         m_appliedVersion = version;
         AppConfig::Instance()->setConfig("Remote", "appliedConfigVersion", version);
@@ -123,12 +143,27 @@ void DeviceSyncAgent::onRemoteParametersApplied(int version, bool success,
     postApplyResult(version, success, message);
 }
 
+void DeviceSyncAgent::onApplyTimeout()
+{
+    if (m_pendingVersion <= 0) return;
+    const int version = m_pendingVersion;
+    // 先复位再记录日志：算法线程稍后即使回调，也会因版本不匹配被忽略。
+    m_pendingVersion = 0;
+    log(QStringLiteral("参数版本 %1 应用超时：%2 秒内算法线程未回报，"
+                       "放弃本次同步并重新拉取配置")
+            .arg(version).arg(kApplyTimeoutMs / 1000));
+}
+
 void DeviceSyncAgent::postApplyResult(int version, bool success, const QString& message)
 {
+    // 已有更新的版本应用成功时不再上报旧版本，避免把服务端的
+    // applied_config_version 回退成旧值。
+    if (version < m_appliedVersion) return;
     QJsonObject body{{"version", version}, {"success", success}, {"message", message}};
     QNetworkRequest request(QUrl(endpoint("/config/applied")));
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
     QNetworkReply* reply = m_network->post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
+    NetTimeout::arm(reply, kRequestTimeoutMs);
     connect(reply, &QNetworkReply::finished, this, [this, reply, version, success, message]() {
         if (reply->error() != QNetworkReply::NoError) {
             logError(QStringLiteral("上报参数应用结果"), reply);
@@ -161,6 +196,7 @@ void DeviceSyncAgent::sendHeartbeat()
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
     m_heartbeatRequestActive = true;
     QNetworkReply* reply = m_network->post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
+    NetTimeout::arm(reply, kRequestTimeoutMs);
     connect(reply, &QNetworkReply::finished, this, [this, reply]() {
         m_heartbeatRequestActive = false;
         m_networkOnline = reply->error() == QNetworkReply::NoError;
@@ -200,10 +236,12 @@ QString DeviceSyncAgent::localAddress() const
     return QString();
 }
 
+void DeviceSyncAgent::log(const QString& message)
+{
+    emit CallManage::getInstance()->sig_addLog("DeviceSync", message);
+}
+
 void DeviceSyncAgent::logError(const QString& operation, QNetworkReply* reply)
 {
-    emit CallManage::getInstance()->sig_addLog("DeviceSync",
-        QStringLiteral("%1失败：HTTP=%2 %3").arg(operation)
-            .arg(reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt())
-            .arg(reply->errorString()));
+    log(QStringLiteral("%1失败：%2").arg(operation, NetTimeout::describeFailure(reply)));
 }

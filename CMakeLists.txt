@@ -65,6 +65,7 @@ set(MINISRC
     src/MseedFileHandler.h src/MseedFileHandler.cpp
     src/MseedUploader.h  src/MseedUploader.cpp
     src/DeviceSyncAgent.h src/DeviceSyncAgent.cpp
+    src/NetworkReplyTimeout.h
     src/picker.h         src/picker.cpp
     src/is_compliant_event.h
     src/Commdef.h

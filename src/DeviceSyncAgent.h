@@ -24,6 +24,7 @@ private slots:
     void onStationConnection(int stationId, bool connected);
     void onChannelStatus(int stationId, int channel, int state, int typeBit);
     void onGpsStatus(int stationId, int gps);
+    void onApplyTimeout();
 
 private:
     struct StationState {
@@ -35,6 +36,7 @@ private:
     QString serverUrl() const;
     QString endpoint(const QString& suffix) const;
     void postApplyResult(int version, bool success, const QString& message);
+    void log(const QString& message);
     void logError(const QString& operation, QNetworkReply* reply);
     QString localAddress() const;
 
@@ -42,6 +44,7 @@ private:
     QNetworkAccessManager* m_network = nullptr;
     QTimer* m_configTimer = nullptr;
     QTimer* m_heartbeatTimer = nullptr;
+    QTimer* m_applyTimer = nullptr;
     QMap<int, StationState> m_stations;
     int m_appliedVersion = 0;
     int m_pendingVersion = 0;

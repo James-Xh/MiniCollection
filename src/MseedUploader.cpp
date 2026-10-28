@@ -2,6 +2,7 @@
 #include "AppConfig.h"
 #include "LogManage.h"
 #include "DeviceIdentity.h"
+#include "NetworkReplyTimeout.h"
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
@@ -19,6 +20,9 @@ const qint64 kChunkSize = 256 * 1024;
 const char* kUploadPath = "/coalmine/mseed/upload";
 const char* kDoneFile = "done.txt";
 const char* kProgressFile = "progress.ini";
+// 单次 HEAD/PUT 的最长等待时间。超时后 abort，走原有失败分支，
+// 避免 m_busy 永久为 true 导致后续文件再也不上传。
+const int kRequestTimeoutMs = 60000;
 }
 
 QScopedPointer<MseedUploader> MseedUploader::__self;
@@ -89,6 +93,13 @@ void MseedUploader::applyFromConfig()
 		connect(m_scanTimer, &QTimer::timeout, this, &MseedUploader::onScan);
 	}
 	m_scanTimer->start(pollSec * 1000);
+	// 启动时把实际上传目标打进日志：排查“上传到底连的哪个地址”只能靠这一行。
+	LOGMgr->addLog("MseedUploader",
+		QStringLiteral("上传配置：%1，serverUrl=%2，pollSec=%3，设备=%4")
+			.arg(m_enabled ? QStringLiteral("已启用") : QStringLiteral("已停用"))
+			.arg(m_serverUrl.isEmpty() ? QStringLiteral("<空>") : m_serverUrl)
+			.arg(pollSec)
+			.arg(m_deviceId.isEmpty() ? QStringLiteral("<未初始化>") : m_deviceId));
 }
 
 void MseedUploader::loadDoneList()
@@ -191,6 +202,7 @@ void MseedUploader::startHead(const QString& filePath)
 	request.setRawHeader("X-Device-ID", m_deviceId.toUtf8());
 	QNetworkReply* reply = m_nam->head(request);
 	m_reply = reply;
+	NetTimeout::arm(reply, kRequestTimeoutMs);
 	connect(reply, &QNetworkReply::finished, this, [this, reply, filePath]() {
 		m_reply.clear();
 		reply->deleteLater();
@@ -208,6 +220,12 @@ void MseedUploader::startHead(const QString& filePath)
 				if (ok && srv >= 0 && srv <= total)
 					offset = srv;   // 服务端权威
 			}
+		}
+		else {
+			// HEAD 失败以前是静默回退到本地进度，网络不通也看不出来。
+			logThrottled("MseedUploader",
+				QStringLiteral("查询服务端进度失败，改用本地进度续传：%1")
+					.arg(NetTimeout::describeFailure(reply)));
 		}
 		if (offset < 0)
 			offset = localProgress(fi.fileName());   // 本地进度续传
@@ -255,6 +273,7 @@ void MseedUploader::startChunk(const QString& filePath, qint64 offset)
 		QStringLiteral("bytes %1-%2/%3").arg(offset).arg(end).arg(total).toUtf8());
 	QNetworkReply* reply = m_nam->put(request, chunk);
 	m_reply = reply;
+	NetTimeout::arm(reply, kRequestTimeoutMs);
 	connect(reply, &QNetworkReply::finished, this, [this, reply, filePath, offset, chunk, total]() {
 		m_reply.clear();
 		reply->deleteLater();
@@ -283,10 +302,8 @@ void MseedUploader::startChunk(const QString& filePath, qint64 offset)
 		}
 		else {
 			logThrottled("MseedUploader",
-				QStringLiteral("上传失败(将重试)：%1 offset=%2 err=%3 status=%4")
-					.arg(fi.fileName()).arg(offset)
-					.arg(reply->errorString())
-					.arg(status));
+				QStringLiteral("上传失败(将重试)：%1 %2")
+					.arg(fi.fileName(), NetTimeout::describeFailure(reply)));
 			m_busy = false;   // 等下一次扫描重试，进度已按分片粒度保存
 		}
 	});
