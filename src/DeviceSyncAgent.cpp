@@ -1,6 +1,5 @@
 #include "DeviceSyncAgent.h"
 
-#include "AppConfig.h"
 #include "CallManage.h"
 #include "Commdef.h"
 #include "DeviceIdentity.h"
@@ -19,7 +18,6 @@
 #include <QNetworkRequest>
 #include <QTimer>
 #include <QUrl>
-#include <QUrlQuery>
 
 namespace {
 const int kSyncIntervalMs = 10000;
@@ -34,8 +32,6 @@ DeviceSyncAgent::DeviceSyncAgent(MDataPickder* pickder, QObject* parent)
     : QObject(parent), m_pickder(pickder), m_network(new QNetworkAccessManager(this)),
       m_configTimer(new QTimer(this)), m_heartbeatTimer(new QTimer(this))
 {
-    m_appliedVersion = AppConfig::Instance()
-        ->getConfig("Remote", "appliedConfigVersion").toInt();
     const QList<TcpDataManager::StationCfg> stations = TcpDataManager::loadStationConfigs();
     for (const TcpDataManager::StationCfg& station : stations) {
         StationState state;
@@ -101,11 +97,10 @@ void DeviceSyncAgent::fetchConfiguration()
 {
     if (m_configRequestActive || m_pendingVersion > 0 || serverUrl().isEmpty()) return;
     m_configRequestActive = true;
-    QUrl url(endpoint("/config/latest"));
-    QUrlQuery query(url);
-    query.addQueryItem("after_version", QString::number(m_appliedVersion));
-    url.setQuery(query);
-    QNetworkRequest request(url);
+    // 不使用 after_version 过滤，始终拉取服务端最新配置。版本只用于内存中
+    // 判断“是否已经应用过”，不写入 Config.ini；服务端每次下发都会生成新版本，
+    // 因此点击下发后设备下一次轮询就会重新应用。
+    QNetworkRequest request(QUrl(endpoint("/config/latest")));
     addProjectToken(request);
     QNetworkReply* reply = m_network->get(request);
     NetTimeout::arm(reply, kRequestTimeoutMs);
@@ -126,7 +121,10 @@ void DeviceSyncAgent::fetchConfiguration()
         const QJsonObject object = document.object();
         const int version = object.value("version").toInt();
         const QVariantMap parameters = object.value("parameters").toObject().toVariantMap();
-        if (version <= m_appliedVersion || parameters.isEmpty()) {
+        // 与内存中最后成功应用的版本相同则跳过，避免每 10 秒重复应用。
+        // 服务端每次下发都会递增版本，所以下发后 version != m_appliedVersion，
+        // 设备会立即重新应用；设备重启后 m_appliedVersion=0，也会先应用一次最新配置。
+        if (version <= 0 || version == m_appliedVersion || parameters.isEmpty()) {
             reply->deleteLater();
             return;
         }
@@ -147,11 +145,8 @@ void DeviceSyncAgent::onRemoteParametersApplied(int version, bool success,
 {
     if (version != m_pendingVersion) return;
     m_applyTimer->stop();
-    if (success) {
+    if (success)
         m_appliedVersion = version;
-        AppConfig::Instance()->setConfig("Remote", "appliedConfigVersion", version);
-        AppConfig::Instance()->syncConfig();
-    }
     m_pendingVersion = 0;
     postApplyResult(version, success, message);
 }
@@ -169,9 +164,9 @@ void DeviceSyncAgent::onApplyTimeout()
 
 void DeviceSyncAgent::postApplyResult(int version, bool success, const QString& message)
 {
-    // 已有更新的版本应用成功时不再上报旧版本，避免把服务端的
-    // applied_config_version 回退成旧值。
-    if (version < m_appliedVersion) return;
+    // 成功回执只上报当前内存中最后应用的版本，避免重试把服务端的
+    // applied_config_version 回退成旧值。失败回执照常上报，便于控制台看到状态。
+    if (success && version != m_appliedVersion) return;
     QJsonObject body{{"version", version}, {"success", success}, {"message", message}};
     QNetworkRequest request(QUrl(endpoint("/config/applied")));
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");

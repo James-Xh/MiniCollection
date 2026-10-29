@@ -399,11 +399,23 @@ def put_device_config(device_id: str, payload: DeviceConfigRequest,
     parameters = model_dict(payload.parameters)
     with write_lock, database() as conn:
         ensure_device(conn, identity)
-        version = conn.execute(
-            """SELECT COALESCE(MAX(version), 0) + 1 FROM device_configs
+        # Device moves between projects keep their applied version in
+        # Config.ini ([Remote] appliedConfigVersion).  A new project starts its
+        # own config numbering at 1, so a device that applied version 10 in the
+        # previous project would ignore all new versions.  Always allocate a
+        # version above both the project history and the device's reported
+        # applied version.
+        max_version = conn.execute(
+            """SELECT COALESCE(MAX(version), 0) FROM device_configs
                WHERE device_id = ?""",
             (identity,),
         ).fetchone()[0]
+        applied_version = conn.execute(
+            """SELECT COALESCE(applied_config_version, 0) FROM devices
+               WHERE device_id = ?""",
+            (identity,),
+        ).fetchone()[0]
+        version = max(max_version, applied_version) + 1
         conn.execute(
             """INSERT INTO device_configs
                (device_id, version, parameters_json, upload_server_url)

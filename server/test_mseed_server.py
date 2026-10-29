@@ -255,5 +255,52 @@ class MseedServerPublicUrlTest(ServerTestBase):
         self.assertTrue(item["download_url"].startswith("https://lgy.example.com/coalmine/"))
 
 
+class MseedServerVersionTest(ServerTestBase):
+    def test_new_config_version_advances_past_device_applied_version(self):
+        # A device moved from another project reports a high applied version.
+        # The new project's first config must not be ignored as "old".
+        heartbeat = {
+            "program_running": True,
+            "program_version": "1.0.0",
+            "network_state": "online",
+            "local_ip": "192.168.111.2",
+            "applied_config_version": 10,
+            "stations": [],
+        }
+        self.assertEqual(
+            self.client.post("/coalmine/devices/01/heartbeat", json=heartbeat).status_code,
+            200,
+        )
+        config = {
+            "parameters": {
+                "tri_on": 5.5,
+                "tri_off": 2,
+                "nsta": 50,
+                "nlta": 500,
+                "detect_ch": 1,
+                "qualified_ch": 1,
+                "energy_thre": 0.25,
+                "amp_thre": 0.25,
+                "intrach": 100,
+                "interch": 250,
+            },
+            "upload_server_url": "http://39.96.41.239:9002",
+        }
+        response = self.client.put("/coalmine/devices/01/config", json=config)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["version"], 11)
+
+        response = self.client.get("/coalmine/devices/01/config/latest?after_version=10")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["version"], 11)
+        self.assertEqual(response.json()["upload_server_url"], "http://39.96.41.239:9002")
+
+        # After the device applies version 11, no newer config is pending.
+        self.assertEqual(
+            self.client.get("/coalmine/devices/01/config/latest?after_version=11").status_code,
+            204,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

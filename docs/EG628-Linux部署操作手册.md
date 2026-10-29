@@ -578,7 +578,7 @@ token=服务器上传令牌
 
 - 从 `/coalmine/devices/设备编号/config/latest` 获取最新配置；
 - 在算法线程计算边界整组应用 `[Para]`，不重启程序；
-- 将已应用版本写入 `[Remote] appliedConfigVersion`；
+- 已应用版本只保存在进程内存中，不写入 `Config.ini`；设备重启后会重新应用服务端最新配置；
 - 向服务器上报设备 IP、程序版本、各站连接、在线通道和 GPS 状态；
 - 应用回执因断网失败时自动重试。
 

@@ -3,11 +3,11 @@
 #include <QMainWindow>
 #include <QMap>
 #include <QByteArray>
+#include <QNetworkRequest>
 #include <memory>
 class QLabel; class QLineEdit; class QListWidget; class QNetworkAccessManager;
 class QNetworkReply; class QPlainTextEdit; class QPushButton; class QSpinBox;
 class QTableWidget; class QTimer; class MseedConsumer; class QJsonObject;
-class QNetworkRequest;
 class ConsumerWindow : public QMainWindow
 {
     Q_OBJECT
@@ -33,6 +33,7 @@ private:
     QString m_consumingDeviceId;
     QString m_lastErrorKey; qint64 m_lastErrorMs = 0;   // 相同网络错误 20 秒内不重复刷屏
     QString m_lastConfigStatusKey;                       // 配置状态只在变化时记录一次
+    QString m_formDeviceId;                              // 参数表单当前对应的设备
     bool m_projectInfoLoaded = false;
     bool m_projectInfoRequestActive = false;
     QNetworkAccessManager* m_network = nullptr; QTimer* m_refreshTimer = nullptr;
