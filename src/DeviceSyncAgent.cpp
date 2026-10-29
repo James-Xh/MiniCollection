@@ -88,6 +88,15 @@ QString DeviceSyncAgent::endpoint(const QString& suffix) const
     return serverUrl() + "/coalmine/devices/" + DeviceIdentity::id() + suffix;
 }
 
+static void addProjectToken(QNetworkRequest& request)
+{
+    // 设备用上传令牌表明自己属于哪个项目。服务端只接受本项目令牌，
+    // 因此指向错误项目地址时心跳和参数请求会直接返回 401。
+    const QByteArray token = MseedUploader::Instance()->uploadToken();
+    if (!token.isEmpty())
+        request.setRawHeader("X-Project-Token", token);
+}
+
 void DeviceSyncAgent::fetchConfiguration()
 {
     if (m_configRequestActive || m_pendingVersion > 0 || serverUrl().isEmpty()) return;
@@ -96,7 +105,9 @@ void DeviceSyncAgent::fetchConfiguration()
     QUrlQuery query(url);
     query.addQueryItem("after_version", QString::number(m_appliedVersion));
     url.setQuery(query);
-    QNetworkReply* reply = m_network->get(QNetworkRequest(url));
+    QNetworkRequest request(url);
+    addProjectToken(request);
+    QNetworkReply* reply = m_network->get(request);
     NetTimeout::arm(reply, kRequestTimeoutMs);
     connect(reply, &QNetworkReply::finished, this, [this, reply]() {
         m_configRequestActive = false;
@@ -164,6 +175,7 @@ void DeviceSyncAgent::postApplyResult(int version, bool success, const QString& 
     QJsonObject body{{"version", version}, {"success", success}, {"message", message}};
     QNetworkRequest request(QUrl(endpoint("/config/applied")));
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    addProjectToken(request);
     QNetworkReply* reply = m_network->post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
     NetTimeout::arm(reply, kRequestTimeoutMs);
     connect(reply, &QNetworkReply::finished, this, [this, reply, version, success, message]() {
@@ -197,6 +209,7 @@ void DeviceSyncAgent::sendHeartbeat()
         {"stations", stations}};
     QNetworkRequest request(QUrl(endpoint("/heartbeat")));
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    addProjectToken(request);
     m_heartbeatRequestActive = true;
     QNetworkReply* reply = m_network->post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
     NetTimeout::arm(reply, kRequestTimeoutMs);

@@ -1,5 +1,7 @@
 import hashlib
+import hmac
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -17,14 +19,28 @@ DATA_ROOT = Path(os.environ.get("MSEED_DATA_ROOT", "/var/lib/mseed-server")).res
 PART_DIR = DATA_ROOT / "parts"
 FILE_DIR = DATA_ROOT / "files"
 DB_PATH = DATA_ROOT / "mseed.db"
-UPLOAD_TOKEN = os.environ.get("MSEED_UPLOAD_TOKEN", "")
-DOWNLOAD_TOKEN = os.environ.get("MSEED_DOWNLOAD_TOKEN", "")
+UPLOAD_TOKEN = os.environ.get("MSEED_UPLOAD_TOKEN", "").strip()
+DOWNLOAD_TOKEN = os.environ.get("MSEED_DOWNLOAD_TOKEN", "").strip()
+# Optional dedicated control-plane token.  The device identifies its project
+# with the upload token and the console with the download token, so both are
+# accepted for control-plane requests as well.  Each project service is a
+# separate process/database, so these tokens never grant access to another
+# project even if a client sends the wrong one.
+PROJECT_TOKEN = os.environ.get("MSEED_PROJECT_TOKEN", "").strip()
+PROJECT_TOKENS = tuple(
+    token for token in (PROJECT_TOKEN, UPLOAD_TOKEN, DOWNLOAD_TOKEN) if token
+)
+PROJECT_NAME = os.environ.get("MSEED_PROJECT_NAME", "").strip() or DATA_ROOT.name
+# Public URL used when the server builds download links behind Nginx/HTTPS.
+# Example: https://lgy.example.com or http://203.0.113.10:9002
+PUBLIC_BASE_URL = os.environ.get("MSEED_PUBLIC_BASE_URL", "").strip().rstrip("/")
 CONTENT_RANGE_RE = re.compile(r"^bytes (\d+)-(\d+)/(\d+)$")
 DEVICE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 MAX_CHUNK_SIZE = 2 * 1024 * 1024
 LEGACY_DEVICE_ID = "01"
 
-app = FastAPI(title="MiniCollection mseed server", version="2.0.0")
+logger = logging.getLogger("mseed_server")
+app = FastAPI(title="MiniCollection mseed server", version="2.1.0")
 write_lock = threading.Lock()
 
 
@@ -109,9 +125,26 @@ def device_file_dir(device_id: str) -> Path:
     return path
 
 
+def token_matches(actual: str | None, expected: str) -> bool:
+    if not actual or not expected:
+        return False
+    return hmac.compare_digest(actual.encode("utf-8"), expected.encode("utf-8"))
+
+
 def require_token(actual: str | None, expected: str, kind: str) -> None:
-    if expected and actual != expected:
+    if expected and not token_matches(actual, expected):
         raise HTTPException(status_code=401, detail=f"invalid {kind} token")
+
+
+def require_project_token(actual: str | None) -> None:
+    # Empty token configuration disables auth, matching the upload/download
+    # behaviour for isolated test deployments.  Production installers always
+    # generate random tokens.
+    if not PROJECT_TOKENS:
+        return
+    if any(token_matches(actual, token) for token in PROJECT_TOKENS):
+        return
+    raise HTTPException(status_code=401, detail="invalid project token")
 
 
 @contextmanager
@@ -219,6 +252,23 @@ def init_storage() -> None:
 @app.on_event("startup")
 def startup() -> None:
     init_storage()
+    if not PROJECT_TOKENS:
+        logger.warning(
+            "MSEED_PROJECT_TOKEN/MSEED_UPLOAD_TOKEN/MSEED_DOWNLOAD_TOKEN are all "
+            "empty; control-plane authentication is disabled for project %s",
+            PROJECT_NAME,
+        )
+    elif not PROJECT_TOKEN:
+        logger.info(
+            "Project %s accepts its upload/download token as project token",
+            PROJECT_NAME,
+        )
+    else:
+        logger.info("Project %s control-plane auth is enabled", PROJECT_NAME)
+    if not PUBLIC_BASE_URL:
+        logger.info(
+            "MSEED_PUBLIC_BASE_URL is empty; download links use the request Host header"
+        )
 
 
 def completed_file(device_id: str, name: str):
@@ -242,7 +292,22 @@ def model_dict(model: BaseModel) -> dict:
 
 @app.get("/healthz")
 def healthz():
-    return {"status": "ok"}
+    return {"status": "ok", "project": PROJECT_NAME, "version": app.version}
+
+
+@app.get("/coalmine/project")
+def project_info(x_project_token: str | None = Header(default=None)):
+    """Identify which project service a console/device is connected to."""
+    require_project_token(x_project_token)
+    return {
+        "name": PROJECT_NAME,
+        "version": app.version,
+        "auth": {
+            "control": bool(PROJECT_TOKENS),
+            "upload": bool(UPLOAD_TOKEN),
+            "download": bool(DOWNLOAD_TOKEN),
+        },
+    }
 
 
 def device_payload(row: sqlite3.Row) -> dict:
@@ -273,14 +338,16 @@ DEVICE_SELECT = """
 
 
 @app.get("/coalmine/devices")
-def list_devices():
+def list_devices(x_project_token: str | None = Header(default=None)):
+    require_project_token(x_project_token)
     with database() as conn:
         rows = conn.execute(DEVICE_SELECT + " ORDER BY d.device_id").fetchall()
     return [device_payload(row) for row in rows]
 
 
 @app.get("/coalmine/devices/{device_id}")
-def get_device(device_id: str):
+def get_device(device_id: str, x_project_token: str | None = Header(default=None)):
+    require_project_token(x_project_token)
     identity = safe_device_id(device_id)
     with database() as conn:
         row = conn.execute(
@@ -292,7 +359,9 @@ def get_device(device_id: str):
 
 
 @app.put("/coalmine/devices/{device_id}")
-def put_device(device_id: str, payload: DeviceRequest):
+def put_device(device_id: str, payload: DeviceRequest,
+               x_project_token: str | None = Header(default=None)):
+    require_project_token(x_project_token)
     identity = safe_device_id(device_id)
     with database() as conn:
         ensure_device(conn, identity)
@@ -308,7 +377,8 @@ def put_device(device_id: str, payload: DeviceRequest):
 
 
 @app.delete("/coalmine/devices/{device_id}", status_code=204)
-def disable_device(device_id: str):
+def disable_device(device_id: str, x_project_token: str | None = Header(default=None)):
+    require_project_token(x_project_token)
     identity = safe_device_id(device_id)
     with database() as conn:
         result = conn.execute(
@@ -322,7 +392,9 @@ def disable_device(device_id: str):
 
 
 @app.put("/coalmine/devices/{device_id}/config")
-def put_device_config(device_id: str, payload: DeviceConfigRequest):
+def put_device_config(device_id: str, payload: DeviceConfigRequest,
+                      x_project_token: str | None = Header(default=None)):
+    require_project_token(x_project_token)
     identity = safe_device_id(device_id)
     parameters = model_dict(payload.parameters)
     with write_lock, database() as conn:
@@ -345,7 +417,9 @@ def put_device_config(device_id: str, payload: DeviceConfigRequest):
 def get_latest_device_config(
     device_id: str,
     after_version: int = Query(0, ge=0),
+    x_project_token: str | None = Header(default=None),
 ):
+    require_project_token(x_project_token)
     identity = safe_device_id(device_id)
     with database() as conn:
         row = conn.execute(
@@ -374,7 +448,9 @@ def get_latest_device_config(
 
 
 @app.get("/coalmine/devices/{device_id}/config/status")
-def get_device_config_status(device_id: str):
+def get_device_config_status(device_id: str,
+                             x_project_token: str | None = Header(default=None)):
+    require_project_token(x_project_token)
     identity = safe_device_id(device_id)
     with database() as conn:
         row = conn.execute(
@@ -392,7 +468,9 @@ def get_device_config_status(device_id: str):
 
 
 @app.post("/coalmine/devices/{device_id}/config/applied")
-def report_config_applied(device_id: str, payload: ConfigAppliedRequest):
+def report_config_applied(device_id: str, payload: ConfigAppliedRequest,
+                          x_project_token: str | None = Header(default=None)):
+    require_project_token(x_project_token)
     identity = safe_device_id(device_id)
     status = "applied" if payload.success else "failed"
     with database() as conn:
@@ -415,6 +493,7 @@ def report_config_applied(device_id: str, payload: ConfigAppliedRequest):
 
 @app.post("/coalmine/devices/{device_id}/heartbeat")
 def device_heartbeat(device_id: str, payload: DeviceHeartbeat, request: Request):
+    require_project_token(request.headers.get("x-project-token"))
     identity = safe_device_id(device_id)
     status_json = json.dumps(model_dict(payload))
     remote_ip = request.client.host if request.client else ""
@@ -426,7 +505,7 @@ def device_heartbeat(device_id: str, payload: DeviceHeartbeat, request: Request)
                updated_at = CURRENT_TIMESTAMP WHERE device_id = ?""",
             (remote_ip, status_json, payload.applied_config_version, identity),
         )
-    return {"device_id": identity, "status": "ok"}
+    return {"device_id": identity, "status": "ok", "project": PROJECT_NAME}
 
 
 @app.head("/coalmine/mseed/upload")
@@ -527,6 +606,7 @@ async def upload_chunk(
 def file_payload(request: Request, row: sqlite3.Row) -> dict:
     device_id = row["device_id"]
     file_id = row["id"]
+    base_url = PUBLIC_BASE_URL or str(request.base_url).rstrip("/")
     return {
         "id": file_id,
         "device_id": device_id,
@@ -534,7 +614,7 @@ def file_payload(request: Request, row: sqlite3.Row) -> dict:
         "size": row["size"],
         "sha256": row["sha256"],
         "created_at": row["created_at"],
-        "download_url": str(request.base_url).rstrip("/")
+        "download_url": base_url
         + f"/coalmine/mseed/{quote(device_id)}/files/{file_id}/{quote(row['name'])}",
     }
 

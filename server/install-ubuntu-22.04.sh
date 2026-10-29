@@ -85,5 +85,6 @@ echo
 echo "mseed server installation completed."
 echo "Health URL: http://${server_ip}/healthz"
 echo "Service status: systemctl status mseed-server.service"
+echo "Add an isolated project: sudo $SOURCE_DIR/add-project.sh <project> <public-port>"
 echo "Credentials (keep this file private):"
 cat "$ENV_FILE"

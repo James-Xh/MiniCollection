@@ -344,7 +344,7 @@ Content-Type: application/json
 }
 ```
 
-控制台使用以下接口展示状态：
+控制台使用以下接口展示状态（均需 `X-Project-Token`，见第十一节）：
 
 ```text
 GET    /coalmine/devices
@@ -355,3 +355,232 @@ DELETE /coalmine/devices/02
 
 设备超过 30 秒没有心跳时，查询结果中的 `online` 为 `false`。删除设备采用停用方式，历史配置和
 mseed 文件不会被删除；设备再次发送心跳时会恢复启用。
+
+控制面的所有 `/coalmine/devices...` 接口都需要请求头 `X-Project-Token`，值为本项目的项目令牌
+（控制台默认使用下载令牌；也可以单独配置 `MSEED_PROJECT_TOKEN`）。令牌不匹配返回 HTTP 401，
+不会列出、修改或返回其它项目的设备。
+
+## 十一、多项目（多控制台）隔离部署
+
+### 11.1 隔离模型
+
+一个项目 = 一个独立服务进程 + 一个独立数据目录 + 一组独立令牌。不要让多个项目共用一个
+`MSEED_DATA_ROOT`，也不要让多个项目共用同一个服务进程。
+
+```text
+控制台 A ──下载/项目令牌 A──┐
+设备 A1/A2 ──上传令牌 A─────┼─> mseed-server-project_a :10001 ─> /var/lib/mseed-server-projects/project_a
+                            │
+控制台 B ──下载/项目令牌 B──┐
+设备 B1/B2 ──上传令牌 B─────┼─> mseed-server-project_b :10002 ─> /var/lib/mseed-server-projects/project_b
+```
+
+每个项目服务只认识自己的令牌和数据库，因此：
+
+- 控制台的设备列表、心跳、参数下发、配置状态只覆盖本项目设备；
+- 设备把上传令牌当作自己的项目身份；指向错误项目的服务地址时，服务端返回 401；
+- 不同项目可以使用相同的设备编号（例如都有 `01`），数据仍分别存放在各自目录；
+- 删除或停用一个项目服务不影响其它项目的运行。
+
+### 11.2 令牌角色
+
+| 环境变量 | 使用者 | 用途 | 控制面是否接受 |
+| --- | --- | --- | --- |
+| `MSEED_UPLOAD_TOKEN` | 设备 | mseed 分片上传 | 是（设备的心跳/参数请求使用它） |
+| `MSEED_DOWNLOAD_TOKEN` | 控制台 | mseed 下载、消费 | 是（控制台默认用它作项目令牌） |
+| `MSEED_PROJECT_TOKEN` | 控制台（可选） | 专用控制面令牌 | 是 |
+| `MSEED_PROJECT_NAME` | 服务/控制台展示 | 项目名称 | - |
+| `MSEED_PUBLIC_BASE_URL` | 服务 | 生成下载链接的公网地址 | - |
+
+上传令牌、下载令牌、控制令牌是三类不同权限，不能互相替代上传或下载接口。三者都是每个项目
+独立的随机值；不要把同一个令牌复制给多个项目，否则该项目之间就不再隔离。生产环境不要留空，
+留空会关闭对应认证，只适用于隔离的测试内网。
+
+### 11.3 新增一个项目
+
+在服务器上，把整个 `server/` 目录上传到 `/tmp/mseed-server-deploy`，先完成单项目安装（见本文
+第一至四节），然后执行：
+
+```bash
+cd /tmp/mseed-server-deploy
+chmod +x add-project.sh
+sudo ./add-project.sh project_lgy 9002
+```
+
+参数含义：
+
+```text
+add-project.sh <项目名> <公网端口> [内部端口] [公网基地址]
+```
+
+- 项目名只允许小写字母、数字、`-`、`_`；
+- 默认内部端口 = 公网端口 + 1000，只监听 `127.0.0.1`；
+- 公网基地址可选，用于 HTTPS 域名，例如 `https://lgy.example.com`；不填则输出
+  `http://服务器IP:公网端口`。
+
+脚本会创建：
+
+```text
+/opt/mseed-server-projects/project_lgy/mseed_server.py         程序副本
+/var/lib/mseed-server-projects/project_lgy/                    独立数据目录/SQLite
+/etc/mseed-server-project_lgy.env                              root-only 令牌
+/etc/systemd/system/mseed-server-project_lgy.service           独立服务
+/etc/nginx/sites-available/mseed-server-project_lgy            独立 Nginx 站点
+```
+
+并自动启动服务、重载 Nginx、允许防火墙端口。脚本可重复执行：已有令牌和数据不会被覆盖，
+程序、服务和 Nginx 配置会刷新。
+
+输出示例：
+
+```text
+Project project_lgy is ready.
+  Public URL:      http://203.0.113.10:9002
+  Internal port:   127.0.0.1:10002
+  Data root:       /var/lib/mseed-server-projects/project_lgy (per-project database)
+
+Device /opt/MiniCollection/data/Config.ini:
+  [Upload]
+  serverUrl=http://203.0.113.10:9002
+  token=<上传令牌>
+
+Console config.ini:
+  [Server]
+  url=http://203.0.113.10:9002
+  downloadToken=<下载令牌>
+```
+
+再新增项目 B 只需换项目名和端口：
+
+```bash
+sudo ./add-project.sh project_b 9003
+```
+
+### 11.4 设备端配置
+
+每台设备只填写自己项目的地址和上传令牌：
+
+```ini
+[Upload]
+enabled=1
+serverUrl=http://203.0.113.10:9002
+token=project_lgy的上传令牌
+```
+
+修改后重启 `minicollection.service`。设备的参数拉取、心跳和应用回执都会带
+`X-Project-Token`（值为上传令牌），服务端据此确认它属于本项目；令牌或地址填错时请求返回
+401，不会被其它项目接管。
+
+### 11.5 控制台配置
+
+```ini
+[Server]
+url=http://203.0.113.10:9002
+downloadToken=project_lgy的下载令牌
+projectToken=
+
+[Consumer]
+pollSeconds=5
+outputDir=data/mseed
+stateFile=data/state
+```
+
+- `downloadToken` 用于下载 mseed，同时作为默认控制面令牌；
+- 如果项目配置了专用 `MSEED_PROJECT_TOKEN`，把它填到 `projectToken`，控制面优先使用它；
+- 控制台标题会显示 `/coalmine/project` 返回的项目名，便于现场确认连接的是哪个项目；
+- 每个控制台只填写自己项目的地址和令牌。不同控制台可以安装在同一台电脑上，使用不同
+  `config.ini` 或不同输出目录。
+
+### 11.6 验证隔离
+
+```bash
+# 项目自己的令牌：200
+curl -H 'X-Project-Token: 项目A下载令牌' http://127.0.0.1:10001/coalmine/devices
+
+# 不带令牌或使用项目B的令牌：401
+curl -i http://127.0.0.1:10001/coalmine/devices
+curl -i -H 'X-Project-Token: 项目B下载令牌' http://127.0.0.1:10001/coalmine/devices
+
+# 确认服务对应的项目
+curl -H 'X-Project-Token: 项目A下载令牌' http://127.0.0.1:10001/coalmine/project
+```
+
+设备实际归属也可以通过心跳后的设备列表确认：
+
+```bash
+curl -H 'X-Project-Token: 项目A下载令牌' http://127.0.0.1:10001/coalmine/devices
+```
+
+项目 A 的列表里只会出现携带项目 A 令牌发送心跳的设备。
+
+### 11.7 设备换项目
+
+设备换项目必须同时修改设备配置中的 `serverUrl` 和 `token`，然后重启采集程序：
+
+1. 在新项目服务中新增/等待设备心跳；
+2. 修改设备 `/opt/MiniCollection/data/Config.ini`；
+3. 重启 `minicollection.service`；
+4. 旧项目的设备会在 30 秒后显示离线，历史 mseed 仍留在旧项目数据目录。
+
+只改 `serverUrl` 不改令牌不会迁移成功，新项目会拒绝该设备的心跳和配置请求，这是刻意的
+防止误接管行为。需要保留旧手持上传进度时，同时迁移设备本地
+`data/upload/<设备编号>/`（可选，服务端会按实际偏移续传）。
+
+### 11.8 HTTPS、子域名和反向代理
+
+脚本默认生成 HTTP 端口站点，适合内网或测试。生产环境建议每个项目使用独立子域名：
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name lgy.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/lgy.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/lgy.example.com/privkey.pem;
+
+    client_max_body_size 2m;
+
+    location / {
+        proxy_pass http://127.0.0.1:10002;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_request_buffering off;
+        proxy_read_timeout 60s;
+    }
+}
+```
+
+同时在项目 env 中设置：
+
+```ini
+MSEED_PUBLIC_BASE_URL=https://lgy.example.com
+```
+
+然后 `sudo systemctl restart mseed-server-project_lgy.service`。否则服务端生成的
+`download_url` 可能仍是内部 HTTP 地址。设备和控制台的 `serverUrl` 填
+`https://lgy.example.com`。
+
+不要用同一个 `server_name` + 同一个端口同时承载两个项目；也不要用路径前缀复用同一个
+项目服务。项目隔离依赖独立端口/子域名和独立服务进程。
+
+### 11.9 运维
+
+```bash
+sudo systemctl status mseed-server-project_lgy.service
+sudo journalctl -u mseed-server-project_lgy.service -n 100 --no-pager
+sudo systemctl restart mseed-server-project_lgy.service
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+备份时按项目分别备份：
+
+```text
+/var/lib/mseed-server-projects/<项目名>/files/
+/var/lib/mseed-server-projects/<项目名>/mseed.db
+/etc/mseed-server-<项目名>.env
+```
+
+服务端仍使用单 worker（分片写入锁为进程内锁）。多项目通过多进程隔离，不要给单个项目增加
+`--workers`。

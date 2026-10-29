@@ -2,6 +2,7 @@
 #define MSEEDUPLOADER_H
 
 #include <QObject>
+#include <QByteArray>
 #include <QTimer>
 #include <QSet>
 #include <QPointer>
@@ -29,6 +30,7 @@ public:
 	void applySettings(bool enabled, const QString& serverUrl); // UI/配置入口，立即生效并落盘
 	bool enabled() const { return m_enabled; }
 	QString serverUrl() const { return m_serverUrl; }
+	QByteArray uploadToken() const { return m_uploadToken; }
 
 private slots:
 	void onScan();
