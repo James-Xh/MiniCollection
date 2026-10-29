@@ -3,6 +3,7 @@
 #include "NetworkReplyTimeout.h"
 
 #include <QDir>
+#include <QDateTime>
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -49,26 +50,31 @@ bool MseedConsumer::start()
         return true;
     if (!m_serverUrl.isValid() || m_serverUrl.scheme().isEmpty()) {
         qCritical() << "Invalid server URL:" << m_serverUrl;
+        emit logMessage(QStringLiteral("启动失败：服务器地址无效 %1").arg(m_serverUrl.toString()));
         return false;
     }
     if (!QDir().mkpath(m_outputDir)) {
         qCritical() << "Cannot create output directory:" << m_outputDir;
+        emit logMessage(QStringLiteral("启动失败：无法创建输出目录 %1").arg(m_outputDir));
         return false;
     }
     if (!QDir().mkpath(QFileInfo(m_stateFile).absolutePath())) {
         qCritical() << "Cannot create state directory:" << m_stateFile;
+        emit logMessage(QStringLiteral("启动失败：无法创建游标目录 %1").arg(m_stateFile));
         return false;
     }
-    if (!loadCursor())
+    if (!loadCursor()) {
+        emit logMessage(QStringLiteral("启动失败：无法读取游标文件 %1").arg(m_stateFile));
         return false;
+    }
 
     qInfo() << "MseedConsumer started, cursor=" << m_cursor
             << "output=" << m_outputDir;
     m_started = true;
     emit cursorChanged(m_cursor);
     emit statusChanged(QStringLiteral("运行中，等待服务器文件"));
-    emit logMessage(QStringLiteral("数据获取服务启动，当前游标：%1，服务器：%2，设备：%3")
-                        .arg(m_cursor).arg(m_serverUrl.toString()).arg(m_deviceId));
+    emit logMessage(QStringLiteral("数据获取服务启动，当前游标：%1，服务器：%2，设备：%3，游标文件：%4")
+                        .arg(m_cursor).arg(m_serverUrl.toString()).arg(m_deviceId).arg(m_stateFile));
     scheduleNext(0);
     return true;
 }
@@ -78,7 +84,7 @@ void MseedConsumer::stop()
     m_started = false;
     m_timer.stop();
     emit statusChanged(QStringLiteral("已停止"));
-    emit logMessage(QStringLiteral("数据获取服务已停止"));
+    emit logMessage(QStringLiteral("设备 %1 数据获取服务已停止").arg(m_deviceId));
 }
 
 void MseedConsumer::poll()
@@ -113,6 +119,11 @@ void MseedConsumer::requestNext()
         if (status == 204) {
             m_busy = false;
             emit statusChanged(QStringLiteral("暂无新文件，%1秒后重试").arg(m_pollMs / 1000));
+            const qint64 now = QDateTime::currentMSecsSinceEpoch();
+            if (now - m_lastNoFileLogMs >= 60000) {
+                m_lastNoFileLogMs = now;
+                emit logMessage(QStringLiteral("暂无新文件，当前游标：%1").arg(m_cursor));
+            }
             scheduleNext();
             return;
         }
@@ -170,7 +181,7 @@ void MseedConsumer::beginDownload(qint64 id,
     m_partPath = m_finalPath + ".part";
     m_hash.reset();
     emit statusChanged(QStringLiteral("正在下载：%1").arg(name));
-    emit logMessage(QStringLiteral("发现新文件：ID=%1，名称=%2，大小=%3")
+    emit logMessage(QStringLiteral("发现新文件，开始下载：ID=%1，名称=%2，大小=%3 字节")
                         .arg(id).arg(name).arg(size));
 
     QFile::remove(m_partPath);
@@ -255,7 +266,8 @@ void MseedConsumer::finishDownload(QNetworkReply* reply)
     emit cursorChanged(m_cursor);
     emit fileDownloaded(m_pendingId, m_pendingName, m_finalPath);
     emit statusChanged(QStringLiteral("下载完成：%1").arg(m_pendingName));
-    emit logMessage(QStringLiteral("完整文件已保存：%1").arg(m_finalPath));
+    emit logMessage(QStringLiteral("下载完成：ID=%1，文件=%2，游标已推进到 %3，保存路径=%4")
+                        .arg(m_pendingId).arg(m_pendingName).arg(m_cursor).arg(m_finalPath));
     m_busy = false;
     scheduleNext(0);
 }

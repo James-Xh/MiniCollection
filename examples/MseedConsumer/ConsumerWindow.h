@@ -34,6 +34,13 @@ private:
     QString m_lastErrorKey; qint64 m_lastErrorMs = 0;   // 相同网络错误 20 秒内不重复刷屏
     QString m_lastConfigStatusKey;                       // 配置状态只在变化时记录一次
     QString m_formDeviceId;                              // 参数表单当前对应的设备
+    QString m_projectName;                               // 当前连接的项目名
+    QString m_lastDeviceSnapshot;                        // 设备在线状态快照
+    qint64 m_lastRefreshSuccessLogMs = 0;                // 成功日志最多每分钟一条
+    QString m_lastSelectedLogId;                         // 已记录过选择的设备
+    QString m_statusLogDeviceId;                         // 设备状态日志对应设备
+    bool m_statusLogOnline = false;
+    bool m_statusLogValid = false;
     bool m_projectInfoLoaded = false;
     bool m_projectInfoRequestActive = false;
     QNetworkAccessManager* m_network = nullptr; QTimer* m_refreshTimer = nullptr;

@@ -59,6 +59,7 @@ private:
     qint64 m_cursor = 0;
     bool m_busy = false;
     bool m_started = false;
+    qint64 m_lastNoFileLogMs = 0;   // “暂无新文件”日志限频
 
     qint64 m_pendingId = 0;
     qint64 m_expectedSize = 0;

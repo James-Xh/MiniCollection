@@ -143,7 +143,30 @@ ConsumerWindow::~ConsumerWindow()=default;
 
 void ConsumerWindow::createDefaultConfig() const{if(QFile::exists(m_configPath))return;QSettings s(m_configPath,QSettings::IniFormat);s.setValue("Server/url","http://39.96.41.239:9002");s.setValue("Server/downloadToken","");s.remove("Server/projectToken");s.setValue("Consumer/pollSeconds",5);s.setValue("Consumer/outputDir","data/mseed");s.setValue("Consumer/stateFile","data/state");s.sync();}
 void ConsumerWindow::loadSettings(){QSettings s(m_configPath,QSettings::IniFormat);m_serverEdit->setText(s.value("Server/url").toString());m_tokenEdit->setText(s.value("Server/downloadToken").toString());m_outputEdit->setText(s.value("Consumer/outputDir","data/mseed").toString());m_stateEdit->setText(s.value("Consumer/stateFile","data/state").toString());m_intervalSpin->setValue(s.value("Consumer/pollSeconds",5).toInt());m_uploadUrlEdit->setText(m_serverEdit->text());}
-void ConsumerWindow::saveSettings(){QSettings s(m_configPath,QSettings::IniFormat);s.setValue("Server/url",m_serverEdit->text().trimmed());s.setValue("Server/downloadToken",m_tokenEdit->text().trimmed());s.remove("Server/projectToken");s.setValue("Consumer/outputDir",m_outputEdit->text().trimmed());s.setValue("Consumer/stateFile",m_stateEdit->text().trimmed());s.setValue("Consumer/pollSeconds",m_intervalSpin->value());s.sync();m_projectInfoLoaded=false;m_formDeviceId.clear();m_lastConfigStatusKey.clear();setWindowTitle(QStringLiteral("采集控制台"));m_uploadUrlEdit->setText(m_serverEdit->text().trimmed());appendLog(QStringLiteral("配置已保存，服务器地址：%1").arg(m_serverEdit->text().trimmed().isEmpty()?QStringLiteral("<空>"):m_serverEdit->text().trimmed()));}
+void ConsumerWindow::saveSettings(){
+    QSettings s(m_configPath,QSettings::IniFormat);
+    s.setValue("Server/url",m_serverEdit->text().trimmed());
+    s.setValue("Server/downloadToken",m_tokenEdit->text().trimmed());
+    s.remove("Server/projectToken");
+    s.setValue("Consumer/outputDir",m_outputEdit->text().trimmed());
+    s.setValue("Consumer/stateFile",m_stateEdit->text().trimmed());
+    s.setValue("Consumer/pollSeconds",m_intervalSpin->value());
+    s.sync();
+    m_projectInfoLoaded=false;
+    m_projectName.clear();
+    m_formDeviceId.clear();
+    m_lastConfigStatusKey.clear();
+    m_lastDeviceSnapshot.clear();
+    m_lastRefreshSuccessLogMs=0;
+    m_lastSelectedLogId.clear();
+    m_statusLogValid=false;
+    setWindowTitle(QStringLiteral("采集控制台"));
+    m_uploadUrlEdit->setText(m_serverEdit->text().trimmed());
+    const QString server=m_serverEdit->text().trimmed();
+    appendLog(QStringLiteral("配置已保存：服务器=%1，下载令牌=%2")
+        .arg(server.isEmpty()?QStringLiteral("<空>"):server,
+             m_tokenEdit->text().trimmed().isEmpty()?QStringLiteral("未填写"):QStringLiteral("已填写")));
+}
 QString ConsumerWindow::selectedDeviceId()const{return m_deviceList->currentItem()?m_deviceList->currentItem()->data(Qt::UserRole).toString():QString();}
 QString ConsumerWindow::apiUrl(const QString& path)const{QString base=m_serverEdit->text().trimmed();while(base.endsWith('/'))base.chop(1);return base+path;}
 
@@ -173,11 +196,13 @@ void ConsumerWindow::loadProjectInfo(){
             const QString name=o.value("name").toString();
             if(!name.isEmpty()){
                 m_projectInfoLoaded=true;
+                m_projectName=name;
                 if (name == "project_lgy")
                     setWindowTitle(QStringLiteral("采集控制台 - %1").arg(QStringLiteral("老公营煤矿")));
                 else
                     setWindowTitle(QStringLiteral("采集控制台 - %1").arg(name));
-                appendLog(QStringLiteral("已连接项目：%1（版本 %2）").arg(name,o.value("version").toString()));
+                appendLog(QStringLiteral("已连接项目：%1（版本 %2，服务器 %3）")
+                    .arg(name, o.value("version").toString(), m_serverEdit->text().trimmed()));
             }
         }else{
             appendLogThrottled(QStringLiteral("获取项目信息失败：%1").arg(NetTimeout::describeFailure(r)));
@@ -194,11 +219,57 @@ void ConsumerWindow::refreshDevices(){
     }
     QNetworkReply* r=m_network->get(apiRequest("/coalmine/devices"));
     NetTimeout::arm(r,kRequestTimeoutMs);
-    connect(r,&QNetworkReply::finished,this,[this,r](){if(r->error()!=QNetworkReply::NoError){handleNetworkError(QStringLiteral("刷新设备"),r);r->deleteLater();return;}QString selected=selectedDeviceId();QJsonArray arr=QJsonDocument::fromJson(r->readAll()).array();{QSignalBlocker blocker(m_deviceList);m_deviceList->clear();for(const QJsonValue& v:arr){QJsonObject o=v.toObject();if(!o.value("enabled").toBool())continue;QString id=o.value("device_id").toString();QListWidgetItem* item=new QListWidgetItem(QStringLiteral("%1  %2").arg(id,o.value("online").toBool()?QStringLiteral("在线"):QStringLiteral("离线")),m_deviceList);item->setData(Qt::UserRole,id);if(id==selected)m_deviceList->setCurrentItem(item);}if(!m_deviceList->currentItem()&&m_deviceList->count())m_deviceList->setCurrentRow(0);}onDeviceSelected();r->deleteLater();});}
-void ConsumerWindow::addDevice(){bool ok=false;QString id=QInputDialog::getText(this,QStringLiteral("新增设备"),QStringLiteral("设备编号"),QLineEdit::Normal,QString(),&ok).trimmed();if(!ok||id.isEmpty())return;QJsonObject body{{"name",QStringLiteral("EG628-%1").arg(id)}};QNetworkRequest req=apiRequest("/coalmine/devices/"+id);req.setHeader(QNetworkRequest::ContentTypeHeader,"application/json");QNetworkReply* r=m_network->put(req,QJsonDocument(body).toJson(QJsonDocument::Compact));NetTimeout::arm(r,kRequestTimeoutMs);connect(r,&QNetworkReply::finished,this,[this,r](){if(r->error()!=QNetworkReply::NoError)handleNetworkError(QStringLiteral("新增设备"),r);else refreshDevices();r->deleteLater();});}
-void ConsumerWindow::removeDevice(){QString id=selectedDeviceId();if(id.isEmpty()||QMessageBox::question(this,QStringLiteral("停用设备"),QStringLiteral("确定停用设备 %1？历史文件不会删除。").arg(id))!=QMessageBox::Yes)return;QNetworkReply* r=m_network->deleteResource(apiRequest("/coalmine/devices/"+id));NetTimeout::arm(r,kRequestTimeoutMs);connect(r,&QNetworkReply::finished,this,[this,r](){if(r->error()!=QNetworkReply::NoError)handleNetworkError(QStringLiteral("停用设备"),r);else refreshDevices();r->deleteLater();});}
+    connect(r,&QNetworkReply::finished,this,[this,r](){
+        if(r->error()!=QNetworkReply::NoError){handleNetworkError(QStringLiteral("刷新设备"),r);r->deleteLater();return;}
+        const QString selected=selectedDeviceId();
+        const QJsonArray arr=QJsonDocument::fromJson(r->readAll()).array();
+        int deviceCount=0;
+        int onlineCount=0;
+        QStringList snapshot;
+        {
+            QSignalBlocker blocker(m_deviceList);
+            m_deviceList->clear();
+            for(const QJsonValue& v:arr){
+                const QJsonObject o=v.toObject();
+                if(!o.value("enabled").toBool())continue;
+                const QString id=o.value("device_id").toString();
+                const bool online=o.value("online").toBool();
+                ++deviceCount;
+                if(online)++onlineCount;
+                snapshot << id + (online?QStringLiteral(":1"):QStringLiteral(":0"));
+                QListWidgetItem* item=new QListWidgetItem(QStringLiteral("%1  %2").arg(id,online?QStringLiteral("在线"):QStringLiteral("离线")),m_deviceList);
+                item->setData(Qt::UserRole,id);
+                if(id==selected)m_deviceList->setCurrentItem(item);
+            }
+            if(!m_deviceList->currentItem()&&m_deviceList->count())m_deviceList->setCurrentRow(0);
+        }
+        snapshot.sort();
+        const QString state=snapshot.join(',');
+        const qint64 now=QDateTime::currentMSecsSinceEpoch();
+        if(state!=m_lastDeviceSnapshot||now-m_lastRefreshSuccessLogMs>=60000){
+            m_lastDeviceSnapshot=state;
+            m_lastRefreshSuccessLogMs=now;
+            if(deviceCount==0){
+                appendLog(QStringLiteral("设备列表刷新成功：当前项目暂无设备%1")
+                    .arg(m_projectName.isEmpty()?QString():QStringLiteral("（%1）").arg(m_projectName)));
+            }else{
+                appendLog(QStringLiteral("设备列表刷新成功：共 %1 台，在线 %2 台%3")
+                    .arg(deviceCount).arg(onlineCount)
+                    .arg(m_projectName.isEmpty()?QString():QStringLiteral("（%1）").arg(m_projectName)));
+            }
+        }
+        onDeviceSelected();
+        r->deleteLater();
+    });
+}
+void ConsumerWindow::addDevice(){bool ok=false;QString id=QInputDialog::getText(this,QStringLiteral("新增设备"),QStringLiteral("设备编号"),QLineEdit::Normal,QString(),&ok).trimmed();if(!ok||id.isEmpty())return;QJsonObject body{{"name",QStringLiteral("EG628-%1").arg(id)}};QNetworkRequest req=apiRequest("/coalmine/devices/"+id);req.setHeader(QNetworkRequest::ContentTypeHeader,"application/json");QNetworkReply* r=m_network->put(req,QJsonDocument(body).toJson(QJsonDocument::Compact));NetTimeout::arm(r,kRequestTimeoutMs);connect(r,&QNetworkReply::finished,this,[this,r,id](){if(r->error()!=QNetworkReply::NoError)handleNetworkError(QStringLiteral("新增设备"),r);else{appendLog(QStringLiteral("新增设备 %1 成功").arg(id));refreshDevices();}r->deleteLater();});}
+void ConsumerWindow::removeDevice(){QString id=selectedDeviceId();if(id.isEmpty()||QMessageBox::question(this,QStringLiteral("停用设备"),QStringLiteral("确定停用设备 %1？历史文件不会删除。").arg(id))!=QMessageBox::Yes)return;QNetworkReply* r=m_network->deleteResource(apiRequest("/coalmine/devices/"+id));NetTimeout::arm(r,kRequestTimeoutMs);connect(r,&QNetworkReply::finished,this,[this,r,id](){if(r->error()!=QNetworkReply::NoError)handleNetworkError(QStringLiteral("停用设备"),r);else{appendLog(QStringLiteral("设备 %1 已停用，历史文件保留").arg(id));refreshDevices();}r->deleteLater();});}
 void ConsumerWindow::onDeviceSelected(){
     const QString id=selectedDeviceId();if(id.isEmpty())return;
+    if(id!=m_lastSelectedLogId){
+        m_lastSelectedLogId=id;
+        appendLog(QStringLiteral("已选择设备 %1，正在获取状态和配置").arg(id));
+    }
     QNetworkReply* r=m_network->get(apiRequest("/coalmine/devices/"+id));
     NetTimeout::arm(r,kRequestTimeoutMs);
     connect(r,&QNetworkReply::finished,this,[this,r,id](){if(id!=selectedDeviceId()){r->deleteLater();return;}if(r->error()!=QNetworkReply::NoError)handleNetworkError(QStringLiteral("获取设备状态"),r);else showDevice(QJsonDocument::fromJson(r->readAll()).object());r->deleteLater();});
@@ -221,6 +292,22 @@ void ConsumerWindow::showDevice(const QJsonObject& o){
     m_configVersion->setText(QStringLiteral("已应用 %1 / 期望 %2%3").arg(o.value("applied_config_version").toInt()).arg(o.value("desired_config_version").toInt()).arg(online?QString():QStringLiteral("（离线，上线后才会拉取）")));
     m_stationHint->setText(online?QString():QStringLiteral("设备离线：下表是最后一次心跳（%1）时的站点快照，不代表当前状态").arg(age));
     const QJsonArray stations=status.value("stations").toArray();
+    const QString deviceId=o.value("device_id").toString();
+    int connectedStations=0;
+    for(const QJsonValue& value:stations)
+        if(value.toObject().value("connected").toBool())++connectedStations;
+    if(!m_statusLogValid||deviceId!=m_statusLogDeviceId||online!=m_statusLogOnline){
+        m_statusLogValid=true;
+        m_statusLogDeviceId=deviceId;
+        m_statusLogOnline=online;
+        appendLog(QStringLiteral("设备 %1 状态：%2；最后心跳：%3；站点：%4 个，已连接 %5 个")
+            .arg(deviceId.isEmpty()?QStringLiteral("-"):deviceId,
+                 online?QStringLiteral("在线"):QStringLiteral("离线"),
+                 lastSeen.isValid()?QStringLiteral("%1（%2）")
+                     .arg(lastSeen.toLocalTime().toString("yyyy-MM-dd HH:mm:ss"),age)
+                     :QStringLiteral("无心跳记录"))
+            .arg(stations.size()).arg(connectedStations));
+    }
     m_stationTable->setRowCount(stations.size());
     for(int i=0;i<stations.size();++i){
         const QJsonObject s=stations.at(i).toObject();
@@ -266,13 +353,54 @@ void ConsumerWindow::submitParameters(){
     });
 }
 
-void ConsumerWindow::startConsumer(){QString id=selectedDeviceId();if(id.isEmpty()){appendLog(QStringLiteral("请先选择设备"));return;}if(m_serverEdit->text().trimmed().isEmpty()||m_tokenEdit->text().trimmed().isEmpty()){appendLog(QStringLiteral("服务器地址或下载令牌为空"));return;}saveSettings();QString out=QDir(absoluteConfigPath(m_outputEdit->text().trimmed())).absoluteFilePath(id);QString stateBase=absoluteConfigPath(m_stateEdit->text().trimmed());if(QFileInfo(stateBase).suffix().compare("txt",Qt::CaseInsensitive)==0)stateBase=QFileInfo(stateBase).absolutePath();QString stateDir=QDir(stateBase).absoluteFilePath(id);m_consumer.reset(new MseedConsumer(QUrl(m_serverEdit->text().trimmed()),m_tokenEdit->text().trimmed().toUtf8(),id,out,QDir(stateDir).absoluteFilePath("cursor.txt"),m_intervalSpin->value(),this));connect(m_consumer.get(),&MseedConsumer::statusChanged,m_statusLabel,&QLabel::setText);connect(m_consumer.get(),&MseedConsumer::cursorChanged,this,[this](qint64 v){m_cursorLabel->setText(QString::number(v));});connect(m_consumer.get(),&MseedConsumer::fileDownloaded,this,[this](qint64,const QString&,const QString& path){m_lastFileLabel->setText(path);});connect(m_consumer.get(),&MseedConsumer::logMessage,this,&ConsumerWindow::appendLog);if(!m_consumer->start()){m_consumer.reset();return;}m_consumingDeviceId=id;setRunning(true);}
-void ConsumerWindow::stopConsumer(){if(m_consumer)m_consumer->stop();m_consumer.reset();m_consumingDeviceId.clear();setRunning(false);}
+void ConsumerWindow::startConsumer(){
+    const QString id=selectedDeviceId();
+    if(id.isEmpty()){appendLog(QStringLiteral("请先选择设备"));return;}
+    if(m_serverEdit->text().trimmed().isEmpty()||m_tokenEdit->text().trimmed().isEmpty()){
+        appendLog(QStringLiteral("服务器地址或下载令牌为空，无法启动数据获取"));
+        return;
+    }
+    saveSettings();
+    const QString out=QDir(absoluteConfigPath(m_outputEdit->text().trimmed())).absoluteFilePath(id);
+    QString stateBase=absoluteConfigPath(m_stateEdit->text().trimmed());
+    if(QFileInfo(stateBase).suffix().compare("txt",Qt::CaseInsensitive)==0)
+        stateBase=QFileInfo(stateBase).absolutePath();
+    const QString stateDir=QDir(stateBase).absoluteFilePath(id);
+    const QString stateFile=QDir(stateDir).absoluteFilePath("cursor.txt");
+    appendLog(QStringLiteral("启动设备 %1 数据获取：输出目录=%2，游标文件=%3").arg(id,out,stateFile));
+    m_consumer.reset(new MseedConsumer(QUrl(m_serverEdit->text().trimmed()),m_tokenEdit->text().trimmed().toUtf8(),id,out,stateFile,m_intervalSpin->value(),this));
+    connect(m_consumer.get(),&MseedConsumer::statusChanged,m_statusLabel,&QLabel::setText);
+    connect(m_consumer.get(),&MseedConsumer::cursorChanged,this,[this](qint64 v){m_cursorLabel->setText(QString::number(v));});
+    connect(m_consumer.get(),&MseedConsumer::fileDownloaded,this,[this](qint64,const QString&,const QString& path){m_lastFileLabel->setText(path);});
+    connect(m_consumer.get(),&MseedConsumer::logMessage,this,&ConsumerWindow::appendLog);
+    if(!m_consumer->start()){
+        appendLog(QStringLiteral("设备 %1 数据获取启动失败，请检查游标文件和目录权限").arg(id));
+        m_consumer.reset();
+        return;
+    }
+    m_consumingDeviceId=id;
+    setRunning(true);
+}
+void ConsumerWindow::stopConsumer(){
+    if(m_consumer){
+        m_consumer->stop();
+    }
+    m_consumer.reset();
+    m_consumingDeviceId.clear();
+    setRunning(false);
+}
 void ConsumerWindow::appendLog(const QString& m){m_logEdit->appendPlainText(QStringLiteral("[%1] %2").arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss"),m));}
 QString ConsumerWindow::absoluteConfigPath(const QString& v)const{QFileInfo i(v);return i.isAbsolute()?i.absoluteFilePath():QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(v);}
 void ConsumerWindow::setRunning(bool running){m_startButton->setEnabled(!running);m_stopButton->setEnabled(running);}
 void ConsumerWindow::handleNetworkError(const QString& op,QNetworkReply* r){
-    appendLogThrottled(QStringLiteral("%1失败：%2").arg(op,NetTimeout::describeFailure(r)));
+    const int http=r->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    QString hint;
+    if(http==401)hint=QStringLiteral("（下载令牌无效或与本项目不匹配）");
+    else if(http==403)hint=QStringLiteral("（无权限）");
+    else if(http==404)hint=QStringLiteral("（接口或设备不存在）");
+    else if(http==0)hint=NetTimeout::timedOut(r)?QStringLiteral("（请求超时，检查网络和服务器）"):QStringLiteral("（无法连接服务器，检查地址和端口）");
+    else if(http>=500)hint=QStringLiteral("（服务器内部错误）");
+    appendLogThrottled(QStringLiteral("%1失败：%2%3").arg(op,NetTimeout::describeFailure(r),hint));
 }
 void ConsumerWindow::appendLogThrottled(const QString& message){
     const qint64 now=QDateTime::currentMSecsSinceEpoch();
