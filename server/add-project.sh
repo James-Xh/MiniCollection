@@ -104,8 +104,8 @@ MSEED_PROJECT_NAME=$PROJECT
 MSEED_DATA_ROOT=$DATA_DIR
 MSEED_UPLOAD_TOKEN=$upload_token
 MSEED_DOWNLOAD_TOKEN=$download_token
-# Optional: dedicated console/control token. Leave unset to accept the
-# upload token (device) and download token (console) as project tokens.
+# Optional: dedicated control-plane token for custom clients. The console
+# always uses the download token, so this is normally left unset.
 #MSEED_PROJECT_TOKEN=
 EOF
   if [[ -n "$public_base_url" ]]; then
@@ -180,7 +180,6 @@ fi
 
 upload_token=$(grep -E '^MSEED_UPLOAD_TOKEN=' "$ENV_FILE" | cut -d= -f2-)
 download_token=$(grep -E '^MSEED_DOWNLOAD_TOKEN=' "$ENV_FILE" | cut -d= -f2-)
-project_token=$(grep -E '^MSEED_PROJECT_TOKEN=' "$ENV_FILE" | cut -d= -f2- || true)
 server_ip=$(detect_public_ip)
 public_base_url=$(grep -E '^MSEED_PUBLIC_BASE_URL=' "$ENV_FILE" | cut -d= -f2- || true)
 public_base_url=${public_base_url:-http://${server_ip}:${PUBLIC_PORT}}
@@ -207,8 +206,5 @@ echo "Console config.ini:"
 echo "  [Server]"
 echo "  url=$public_base_url"
 echo "  downloadToken=$download_token"
-if [[ -n "$project_token" ]]; then
-  echo "  projectToken=$project_token"
-fi
 echo
 echo "Credentials file (root only): $ENV_FILE"

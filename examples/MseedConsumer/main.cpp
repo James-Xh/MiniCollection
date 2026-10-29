@@ -11,6 +11,6 @@ int main(int argc, char* argv[])
     app.setStyleSheet(UiStyle::consoleSheet());
 
     ConsumerWindow window;
-    window.show();
+    window.showMaximized();
     return app.exec();
 }

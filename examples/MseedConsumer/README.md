@@ -49,8 +49,6 @@ C:\Qt\5.15.2\msvc2019_64\bin\windeployqt.exe --release --no-translations ^
 [Server]
 url=http://39.96.41.239:443
 downloadToken=你的MSEED_DOWNLOAD_TOKEN
-# 可选：仅当服务器设置了 MSEED_PROJECT_TOKEN 时填写
-projectToken=
 
 [Consumer]
 pollSeconds=5
@@ -61,7 +59,7 @@ stateFile=data/state/cursor.txt
 相对路径以 `MseedConsumer.exe` 所在目录为基准。程序启动后自动按 `pollSeconds` 轮询，
 也可以在界面修改配置并点击“保存”和“启动”。界面显示当前状态、已确认游标、最近下载文件和日志。
 
-`downloadToken` 同时作为默认的项目控制令牌，用于设备列表、参数下发和状态查询；连接成功后
+`downloadToken` 同时作为项目控制令牌，用于设备列表、参数下发和状态查询；连接成功后
 窗口标题会显示服务端返回的项目名。一个控制台只填写一个项目的地址和令牌，多个项目请使用
 不同的 `config.ini` 或安装目录。完整多项目部署见
 [`../../docs/Mseed服务器部署与接口协议.md`](../../docs/Mseed服务器部署与接口协议.md) 第十一节。

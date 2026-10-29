@@ -357,7 +357,7 @@ DELETE /coalmine/devices/02
 mseed 文件不会被删除；设备再次发送心跳时会恢复启用。
 
 控制面的所有 `/coalmine/devices...` 接口都需要请求头 `X-Project-Token`，值为本项目的项目令牌
-（控制台默认使用下载令牌；也可以单独配置 `MSEED_PROJECT_TOKEN`）。令牌不匹配返回 HTTP 401，
+（控制台统一使用下载令牌作为项目令牌）。令牌不匹配返回 HTTP 401，
 不会列出、修改或返回其它项目的设备。
 
 ## 十一、多项目（多控制台）隔离部署
@@ -388,7 +388,7 @@ mseed 文件不会被删除；设备再次发送心跳时会恢复启用。
 | --- | --- | --- | --- |
 | `MSEED_UPLOAD_TOKEN` | 设备 | mseed 分片上传 | 是（设备的心跳/参数请求使用它） |
 | `MSEED_DOWNLOAD_TOKEN` | 控制台 | mseed 下载、消费 | 是（控制台默认用它作项目令牌） |
-| `MSEED_PROJECT_TOKEN` | 控制台（可选） | 专用控制面令牌 | 是 |
+| `MSEED_PROJECT_TOKEN` | 自定义控制端（可选） | 专用控制面令牌；控制台不使用 | 是 |
 | `MSEED_PROJECT_NAME` | 服务/控制台展示 | 项目名称 | - |
 | `MSEED_PUBLIC_BASE_URL` | 服务 | 生成下载链接的公网地址 | - |
 
@@ -477,7 +477,6 @@ token=project_lgy的上传令牌
 [Server]
 url=http://203.0.113.10:9002
 downloadToken=project_lgy的下载令牌
-projectToken=
 
 [Consumer]
 pollSeconds=5
@@ -485,10 +484,11 @@ outputDir=data/mseed
 stateFile=data/state
 ```
 
-- `downloadToken` 用于下载 mseed，同时作为默认控制面令牌；
-- 如果项目配置了专用 `MSEED_PROJECT_TOKEN`，把它填到 `projectToken`，控制面优先使用它；
+- `downloadToken` 用于下载 mseed，同时作为控制面令牌；
+- 控制台不再读取 `projectToken`，旧配置里的该键会在下一次保存时删除；
+- `MSEED_PROJECT_TOKEN` 仅供自定义控制端使用，控制台不使用；
 - 控制台标题会显示 `/coalmine/project` 返回的项目名，便于现场确认连接的是哪个项目；
-- 每个控制台只填写自己项目的地址和令牌。不同控制台可以安装在同一台电脑上，使用不同
+- 每个控制台只填写自己项目的地址和下载令牌。不同控制台可以安装在同一台电脑上，使用不同
   `config.ini` 或不同输出目录。
 
 ### 11.6 验证隔离

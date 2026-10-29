@@ -67,7 +67,7 @@ bool MseedConsumer::start()
     m_started = true;
     emit cursorChanged(m_cursor);
     emit statusChanged(QStringLiteral("运行中，等待服务器文件"));
-    emit logMessage(QStringLiteral("消费服务启动，当前游标：%1，服务器：%2，设备：%3")
+    emit logMessage(QStringLiteral("数据获取服务启动，当前游标：%1，服务器：%2，设备：%3")
                         .arg(m_cursor).arg(m_serverUrl.toString()).arg(m_deviceId));
     scheduleNext(0);
     return true;
@@ -78,7 +78,7 @@ void MseedConsumer::stop()
     m_started = false;
     m_timer.stop();
     emit statusChanged(QStringLiteral("已停止"));
-    emit logMessage(QStringLiteral("消费服务已停止"));
+    emit logMessage(QStringLiteral("数据获取服务已停止"));
 }
 
 void MseedConsumer::poll()
@@ -248,7 +248,7 @@ void MseedConsumer::finishDownload(QNetworkReply* reply)
     qInfo() << "Downloaded complete mseed: id=" << m_pendingId
             << "file=" << m_finalPath;
     if (!saveCursor(m_pendingId)) {
-        fail(QStringLiteral("无法保存消费游标"));
+        fail(QStringLiteral("无法保存数据获取游标"));
         return;
     }
     m_cursor = m_pendingId;

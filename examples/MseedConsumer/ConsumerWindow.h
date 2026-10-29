@@ -37,8 +37,7 @@ private:
     bool m_projectInfoLoaded = false;
     bool m_projectInfoRequestActive = false;
     QNetworkAccessManager* m_network = nullptr; QTimer* m_refreshTimer = nullptr;
-    QLineEdit *m_serverEdit=nullptr,*m_tokenEdit=nullptr,*m_projectTokenEdit=nullptr,
-        *m_outputEdit=nullptr,*m_stateEdit=nullptr;
+    QLineEdit *m_serverEdit=nullptr,*m_tokenEdit=nullptr,*m_outputEdit=nullptr,*m_stateEdit=nullptr;
     QSpinBox* m_intervalSpin=nullptr; QListWidget* m_deviceList=nullptr;
     QLabel *m_deviceStatus=nullptr,*m_deviceIp=nullptr,*m_programVersion=nullptr,*m_configVersion=nullptr;
     QLabel *m_lastSeen=nullptr,*m_stationHint=nullptr;
