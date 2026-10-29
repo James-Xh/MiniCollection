@@ -11,10 +11,11 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QGroupBox>
-#include <QFormLayout>
+#include <QGridLayout>
 #include <QFileInfo>
 #include <QDateTime>
 #include <QCheckBox>
+#include <QSettings>
 #include <cstring>
 
 StatusWindow::StatusWindow(QWidget* parent)
@@ -22,7 +23,8 @@ StatusWindow::StatusWindow(QWidget* parent)
 {
 	memset(m_online, 0, sizeof(m_online));
 	setWindowTitle(QStringLiteral("微震数据采集 - 设备 %1").arg(DeviceIdentity::id()));
-	resize(860, 560);
+	resize(960, 600);
+	setMinimumSize(860, 520);
 
 	m_table = new QTableWidget(this);
 	m_table->setColumnCount(6);
@@ -90,6 +92,17 @@ StatusWindow::StatusWindow(QWidget* parent)
 		this, &StatusWindow::onAddLog, Qt::QueuedConnection);
 }
 
+void StatusWindow::setPickder(QObject* pickder)
+{
+	m_pickder = pickder;
+	if (MDataPickder* p = qobject_cast<MDataPickder*>(pickder)) {
+		// 算法线程应用完服务器参数后，通知界面同步输入框。
+		connect(p, &MDataPickder::remoteParametersApplied,
+			this, &StatusWindow::onRemoteParametersApplied,
+			Qt::QueuedConnection);
+	}
+}
+
 QWidget* StatusWindow::initParamFormWidget()
 {
 	// ntag 顺序必须与 MDataPickder::changeCallcValue 一致
@@ -101,21 +114,35 @@ QWidget* StatusWindow::initParamFormWidget()
 		m_paramTags.append(tag);
 
 	QGroupBox* box = new QGroupBox(QStringLiteral("算法参数(Config.ini [Para])"), this);
-	QFormLayout* form = new QFormLayout(box);
+	QGridLayout* grid = new QGridLayout(box);
+	grid->setHorizontalSpacing(16);
+	grid->setVerticalSpacing(8);
 
+	// 两列布局：字体放大后仍能在设备屏幕上完整显示。
+	int row = 0;
+	int col = 0;
 	for (int tag : m_paramTags) {
 		const QString& name = m_paramNames.at(tag);
 		if (name.isEmpty())
 			continue;
+		QLabel* label = new QLabel(name, box);
+		label->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
 		QLineEdit* edit = new QLineEdit(
 			AppConfig::Instance()->getConfig("Para", name).toString(), box);
 		m_paramEdits.append(edit);
-		form->addRow(name, edit);
+		grid->addWidget(label, row, col * 2);
+		grid->addWidget(edit, row, col * 2 + 1);
+		if (++col == 2) {
+			col = 0;
+			++row;
+		}
 	}
 
-	QPushButton* applyBtn = new QPushButton(QStringLiteral("应用"), box);
+	QPushButton* applyBtn = new QPushButton(QStringLiteral("应用参数"), box);
 	connect(applyBtn, &QPushButton::clicked, this, &StatusWindow::onApplyParams);
-	form->addRow(QString(), applyBtn);
+	grid->addWidget(applyBtn, row + (col ? 1 : 0), 0, 1, 4);
+	grid->setColumnStretch(1, 1);
+	grid->setColumnStretch(3, 1);
 	return box;
 }
 
@@ -188,6 +215,39 @@ void StatusWindow::onAddLog(const QString& type, const QString& desc)
 {
 	m_log->appendPlainText(QString("[%1] %2: %3")
 		.arg(QDateTime::currentDateTime().toString("hh:mm:ss")).arg(type).arg(desc));
+}
+
+void StatusWindow::onRemoteParametersApplied(int version, bool success,
+	const QString& message)
+{
+	if (!success) {
+		m_log->appendPlainText(QStringLiteral("[参数] 服务器版本 %1 应用失败: %2")
+			.arg(version).arg(message));
+		return;
+	}
+
+	// MDataPickder 已把整组参数写入 Config.ini，这里把界面输入框同步成
+	// 实际生效的值，避免控制台下发后设备界面仍显示旧参数。
+	const QSettings settings(AppConfig::Instance()->configFilePath(), QSettings::IniFormat);
+	int editIndex = 0;
+	for (int tag : m_paramTags) {
+		const QString& name = m_paramNames.at(tag);
+		if (name.isEmpty())
+			continue;
+		QLineEdit* edit = m_paramEdits.at(editIndex++);
+		if (!edit)
+			continue;
+		const QVariant value = settings.value("Para/" + name);
+		if (value.isValid())
+			edit->setText(value.toString());
+	}
+
+	// 上传地址也可能随参数一起下发，界面同步显示。
+	m_uploadCheck->setChecked(MseedUploader::Instance()->enabled());
+	m_uploadEdit->setText(MseedUploader::Instance()->serverUrl());
+
+	m_log->appendPlainText(QStringLiteral("[参数] 服务器版本 %1 已应用，界面参数已同步")
+		.arg(version));
 }
 
 void StatusWindow::onApplyParams()

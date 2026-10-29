@@ -1,0 +1,19 @@
+[Unit]
+Description=MiniCollection mseed API - project_lgy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mseed
+Group=mseed
+WorkingDirectory=/opt/mseed-server-projects/project_lgy
+EnvironmentFile=/etc/mseed-server-project_lgy.env
+ExecStart=/opt/mseed-server/venv/bin/uvicorn mseed_server:app --host 127.0.0.1 --port 10002 --workers 1
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

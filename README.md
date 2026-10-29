@@ -12,7 +12,8 @@ MseedFileHandler: data/temp -> data/picker(有效事件) / data/invalid(无效)
 HttpMgr: 计算窗口JSON上传(可配)
 ```
 
-## 界面（原生控件，无自定义样式）
+## 界面（Qt Widgets + 统一浅色样式）
+- 样式集中在 `src/UiStyle.h`，设备端字号更大，参数表单为两列
 - 表格：每站 连接状态 / 在线通道数 / GPS / 最近事件
 - 同步状态行（等待数据 / 同步正常 / 同步异常 + 最大时间差）
 - 算法参数：tri_on / tri_off / nsta / nlta / detect_ch / qualified_ch /

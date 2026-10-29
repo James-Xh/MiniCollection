@@ -7,6 +7,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QFormLayout>
+#include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -88,11 +89,16 @@ ConsumerWindow::ConsumerWindow(QWidget* parent) : QMainWindow(parent),
     QHBoxLayout* commands=new QHBoxLayout; m_saveButton=new QPushButton(QStringLiteral("保存"),central);
     m_startButton=new QPushButton(QStringLiteral("启动消费"),central); m_stopButton=new QPushButton(QStringLiteral("停止消费"),central);
     QPushButton* refresh=new QPushButton(QStringLiteral("刷新设备"),central);
+    m_saveButton->setObjectName("secondaryButton");
+    m_stopButton->setObjectName("dangerButton");
+    refresh->setObjectName("secondaryButton");
     commands->addWidget(m_saveButton);commands->addWidget(m_startButton);commands->addWidget(m_stopButton);commands->addWidget(refresh);commands->addStretch();root->addLayout(commands);
 
     QSplitter* split=new QSplitter(central); QWidget* left=new QWidget(split); QVBoxLayout* ll=new QVBoxLayout(left);
     m_deviceList=new QListWidget(left); ll->addWidget(m_deviceList,1); QHBoxLayout* dc=new QHBoxLayout;
     QPushButton* add=new QPushButton(QStringLiteral("新增"),left); QPushButton* remove=new QPushButton(QStringLiteral("停用"),left);
+    add->setObjectName("secondaryButton");
+    remove->setObjectName("dangerButton");
     dc->addWidget(add);dc->addWidget(remove);ll->addLayout(dc); split->addWidget(left);
     QTabWidget* tabs=new QTabWidget(split);
     QWidget* statusPage=new QWidget(tabs); QVBoxLayout* sl=new QVBoxLayout(statusPage); QFormLayout* df=new QFormLayout;
@@ -100,11 +106,29 @@ ConsumerWindow::ConsumerWindow(QWidget* parent) : QMainWindow(parent),
     df->addRow(QStringLiteral("设备状态"),m_deviceStatus);df->addRow(QStringLiteral("最后心跳"),m_lastSeen);df->addRow(QStringLiteral("设备IP"),m_deviceIp);df->addRow(QStringLiteral("程序版本"),m_programVersion);df->addRow(QStringLiteral("配置版本"),m_configVersion);sl->addLayout(df);
     m_stationHint=new QLabel(QString(),statusPage);m_stationHint->setWordWrap(true);m_stationHint->setStyleSheet(QStringLiteral("color:#8a5a00;"));sl->addWidget(m_stationHint);
     m_stationTable=new QTableWidget(statusPage);m_stationTable->setColumnCount(6);m_stationTable->setHorizontalHeaderLabels({QStringLiteral("站号"),QStringLiteral("IP:PORT"),QStringLiteral("连接"),QStringLiteral("在线通道"),QStringLiteral("总通道"),QStringLiteral("GPS")});m_stationTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);m_stationTable->setEditTriggers(QAbstractItemView::NoEditTriggers);sl->addWidget(m_stationTable);tabs->addTab(statusPage,QStringLiteral("设备状态"));
-    QWidget* parameterPage=new QWidget(tabs);QFormLayout* pf=new QFormLayout(parameterPage);
+    QWidget* parameterPage=new QWidget(tabs);QGridLayout* pf=new QGridLayout(parameterPage);
+    pf->setHorizontalSpacing(12);pf->setVerticalSpacing(8);
     const QStringList keys={"tri_on","tri_off","nsta","nlta","detect_ch","qualified_ch","energy_thre","amp_thre","intrach","interch"};
     const QStringList defaults={"5.5","2","50","500","1","1","0.25","0.25","100","250"};
-    for(int i=0;i<keys.size();++i){QLineEdit* edit=new QLineEdit(defaults.at(i),parameterPage);m_parameterEdits.insert(keys.at(i),edit);pf->addRow(keys.at(i),edit);}
-    m_uploadUrlEdit=new QLineEdit(parameterPage);pf->addRow(QStringLiteral("上传服务器(设备使用)"),m_uploadUrlEdit);QPushButton* submit=new QPushButton(QStringLiteral("下发参数"),parameterPage);pf->addRow(QString(),submit);tabs->addTab(parameterPage,QStringLiteral("参数设置"));
+    for(int i=0;i<keys.size();++i){
+        const int row=i/2,col=i%2;
+        QLabel* label=new QLabel(keys.at(i),parameterPage);
+        label->setAlignment(Qt::AlignRight|Qt::AlignVCenter);
+        QLineEdit* edit=new QLineEdit(defaults.at(i),parameterPage);
+        m_parameterEdits.insert(keys.at(i),edit);
+        pf->addWidget(label,row,col*2);
+        pf->addWidget(edit,row,col*2+1);
+    }
+    const int uploadRow=(keys.size()+1)/2;
+    QLabel* uploadLabel=new QLabel(QStringLiteral("上传服务器(设备使用)"),parameterPage);
+    uploadLabel->setAlignment(Qt::AlignRight|Qt::AlignVCenter);
+    m_uploadUrlEdit=new QLineEdit(parameterPage);
+    pf->addWidget(uploadLabel,uploadRow,0);
+    pf->addWidget(m_uploadUrlEdit,uploadRow,1,1,3);
+    QPushButton* submit=new QPushButton(QStringLiteral("下发参数"),parameterPage);
+    pf->addWidget(submit,uploadRow+1,0,1,4);
+    pf->setColumnStretch(1,1);pf->setColumnStretch(3,1);
+    tabs->addTab(parameterPage,QStringLiteral("参数设置"));
     QWidget* filesPage=new QWidget(tabs);QFormLayout* ff=new QFormLayout(filesPage);m_statusLabel=new QLabel(QStringLiteral("未启动"),filesPage);m_cursorLabel=new QLabel("0",filesPage);m_lastFileLabel=new QLabel("-",filesPage);m_lastFileLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);ff->addRow(QStringLiteral("消费状态"),m_statusLabel);ff->addRow(QStringLiteral("已确认游标"),m_cursorLabel);ff->addRow(QStringLiteral("最近文件"),m_lastFileLabel);tabs->addTab(filesPage,QStringLiteral("mseed消费"));
     split->addWidget(tabs);split->setStretchFactor(1,1);root->addWidget(split,2);
     m_logEdit=new QPlainTextEdit(central);m_logEdit->setReadOnly(true);m_logEdit->setMaximumBlockCount(500);root->addWidget(m_logEdit,1);setCentralWidget(central);
@@ -148,7 +172,10 @@ void ConsumerWindow::loadProjectInfo(){
             const QString name=o.value("name").toString();
             if(!name.isEmpty()){
                 m_projectInfoLoaded=true;
-                setWindowTitle(QStringLiteral("采集控制台 - %1").arg(name));
+                if (name == "project_lgy")
+                    setWindowTitle(QStringLiteral("采集控制台 - %1").arg(QStringLiteral("老公营煤矿")));
+                else
+                    setWindowTitle(QStringLiteral("采集控制台 - %1").arg(name));
                 appendLog(QStringLiteral("已连接项目：%1（版本 %2）").arg(name,o.value("version").toString()));
             }
         }else{

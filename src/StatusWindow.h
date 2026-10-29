@@ -19,7 +19,7 @@ class StatusWindow : public QWidget
     Q_OBJECT
 public:
     explicit StatusWindow(QWidget* parent = nullptr);
-    void setPickder(QObject* pickder) { m_pickder = pickder; }
+    void setPickder(QObject* pickder);
 
 private slots:
     void onStationConnectStatus(int stationId, bool connected);
@@ -28,6 +28,7 @@ private slots:
     void onPickerSyncStatus(int state, qint64 maxDiffUs, int stationId, const QString& message);
     void onPickerNewFile(const QString& file);
     void onAddLog(const QString& type, const QString& desc);
+    void onRemoteParametersApplied(int version, bool success, const QString& message);
     void onApplyParams();
     void onApplyUploadSettings();
 
