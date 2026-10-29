@@ -113,7 +113,8 @@ ConsumerWindow::ConsumerWindow(QWidget* parent) : QMainWindow(parent),
     for(int i=0;i<keys.size();++i){
         const int row=i/2,col=i%2;
         QLabel* label=new QLabel(keys.at(i),parameterPage);
-        label->setAlignment(Qt::AlignRight|Qt::AlignVCenter);
+        label->setAlignment(Qt::AlignLeft|Qt::AlignVCenter);
+        label->setMinimumWidth(110);
         QLineEdit* edit=new QLineEdit(defaults.at(i),parameterPage);
         m_parameterEdits.insert(keys.at(i),edit);
         pf->addWidget(label,row,col*2);
@@ -121,7 +122,7 @@ ConsumerWindow::ConsumerWindow(QWidget* parent) : QMainWindow(parent),
     }
     const int uploadRow=(keys.size()+1)/2;
     QLabel* uploadLabel=new QLabel(QStringLiteral("上传服务器(设备使用)"),parameterPage);
-    uploadLabel->setAlignment(Qt::AlignRight|Qt::AlignVCenter);
+    uploadLabel->setAlignment(Qt::AlignLeft|Qt::AlignVCenter);
     m_uploadUrlEdit=new QLineEdit(parameterPage);
     pf->addWidget(uploadLabel,uploadRow,0);
     pf->addWidget(m_uploadUrlEdit,uploadRow,1,1,3);

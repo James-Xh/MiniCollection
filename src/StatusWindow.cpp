@@ -23,8 +23,8 @@ StatusWindow::StatusWindow(QWidget* parent)
 {
 	memset(m_online, 0, sizeof(m_online));
 	setWindowTitle(QStringLiteral("微震数据采集 - 设备 %1").arg(DeviceIdentity::id()));
-	resize(960, 600);
-	setMinimumSize(860, 520);
+	resize(1180, 760);
+	setMinimumSize(1000, 720);
 
 	m_table = new QTableWidget(this);
 	m_table->setColumnCount(6);
@@ -32,24 +32,58 @@ StatusWindow::StatusWindow(QWidget* parent)
 		QStringLiteral("IP:Port"), QStringLiteral("连接状态"),
 		QStringLiteral("在线通道"), QStringLiteral("GPS"),
 		QStringLiteral("最近事件") });
-	m_table->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+	m_table->setAlternatingRowColors(true);
+	m_table->setShowGrid(true);
 	m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+	m_table->setFocusPolicy(Qt::NoFocus);
+	m_table->setSelectionMode(QAbstractItemView::NoSelection);
+	m_table->verticalHeader()->setVisible(false);
+	m_table->verticalHeader()->setDefaultSectionSize(42);
+	m_table->setMinimumHeight(240);
+	m_table->setTextElideMode(Qt::ElideMiddle);
+	m_table->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
+	QHeaderView* header = m_table->horizontalHeader();
+	header->setSectionResizeMode(QHeaderView::Fixed);
+	header->setSectionResizeMode(5, QHeaderView::Stretch);
+	header->setFixedHeight(46);
+	m_table->setColumnWidth(0, 80);
+	m_table->setColumnWidth(1, 220);
+	m_table->setColumnWidth(2, 120);
+	m_table->setColumnWidth(3, 130);
+	m_table->setColumnWidth(4, 90);
 
 	m_syncLabel = new QLabel(QStringLiteral("设备编号: %1    同步状态: 等待数据")
 		.arg(DeviceIdentity::id()), this);
+	m_syncLabel->setObjectName("syncLabel");
+	m_syncLabel->setWordWrap(true);
+	m_syncLabel->setMinimumHeight(48);
 
 	m_log = new QPlainTextEdit(this);
 	m_log->setReadOnly(true);
 	m_log->setMaximumBlockCount(500);
+	m_log->setMinimumHeight(140);
+
+	QGroupBox* tableBox = new QGroupBox(QStringLiteral("站点状态"), this);
+	QVBoxLayout* tableLay = new QVBoxLayout(tableBox);
+	tableLay->setContentsMargins(8, 4, 8, 8);
+	tableLay->addWidget(m_table);
+
+	QGroupBox* logBox = new QGroupBox(QStringLiteral("运行日志"), this);
+	QVBoxLayout* logLay = new QVBoxLayout(logBox);
+	logLay->setContentsMargins(8, 4, 8, 8);
+	logLay->addWidget(m_log);
 
 	QVBoxLayout* mainLayout = new QVBoxLayout(this);
-	mainLayout->addWidget(m_table, 3);
-	mainLayout->addWidget(m_syncLabel);
-	mainLayout->addWidget(initParamFormWidget(), 0);
+	mainLayout->setContentsMargins(16, 16, 16, 16);
+	mainLayout->setSpacing(12);
+	mainLayout->addWidget(tableBox, 3);
+	mainLayout->addWidget(m_syncLabel, 0);
 
 	// ---- mseed 网络上传设置（picker 目录生成 mseed 后自动上传，支持断点续传）----
 	QGroupBox* uploadBox = new QGroupBox(QStringLiteral("mseed网络上传"), this);
 	QHBoxLayout* uploadLay = new QHBoxLayout(uploadBox);
+	uploadLay->setContentsMargins(8, 4, 8, 8);
+	uploadLay->setSpacing(10);
 	m_uploadCheck = new QCheckBox(QStringLiteral("启用"), uploadBox);
 	m_uploadEdit = new QLineEdit(uploadBox);
 	m_uploadEdit->setPlaceholderText(QStringLiteral("服务器地址，如 http://192.168.1.100:9001"));
@@ -60,9 +94,20 @@ StatusWindow::StatusWindow(QWidget* parent)
 	m_uploadCheck->setChecked(MseedUploader::Instance()->enabled());
 	m_uploadEdit->setText(MseedUploader::Instance()->serverUrl());
 	connect(uploadApplyBtn, &QPushButton::clicked, this, &StatusWindow::onApplyUploadSettings);
-	mainLayout->addWidget(uploadBox, 0);
-	mainLayout->addWidget(new QLabel(QStringLiteral("日志:"), this), 0);
-	mainLayout->addWidget(m_log, 2);
+
+	// 参数和日志左右分栏，避免 10 个参数把窗口撑得过高。
+	QWidget* rightPanel = new QWidget(this);
+	QVBoxLayout* rightLay = new QVBoxLayout(rightPanel);
+	rightLay->setContentsMargins(0, 0, 0, 0);
+	rightLay->setSpacing(12);
+	rightLay->addWidget(uploadBox, 0);
+	rightLay->addWidget(logBox, 1);
+
+	QHBoxLayout* bottomLay = new QHBoxLayout;
+	bottomLay->setSpacing(12);
+	bottomLay->addWidget(initParamFormWidget(), 3);
+	bottomLay->addWidget(rightPanel, 2);
+	mainLayout->addLayout(bottomLay, 2);
 
 	// 按已配置站生成表格行
 	const QList<TcpDataManager::StationCfg> configs = TcpDataManager::loadStationConfigs();
@@ -115,8 +160,9 @@ QWidget* StatusWindow::initParamFormWidget()
 
 	QGroupBox* box = new QGroupBox(QStringLiteral("算法参数(Config.ini [Para])"), this);
 	QGridLayout* grid = new QGridLayout(box);
-	grid->setHorizontalSpacing(16);
-	grid->setVerticalSpacing(8);
+	grid->setContentsMargins(8, 4, 8, 8);
+	grid->setHorizontalSpacing(10);
+	grid->setVerticalSpacing(10);
 
 	// 两列布局：字体放大后仍能在设备屏幕上完整显示。
 	int row = 0;
@@ -126,9 +172,11 @@ QWidget* StatusWindow::initParamFormWidget()
 		if (name.isEmpty())
 			continue;
 		QLabel* label = new QLabel(name, box);
-		label->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+		label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+		label->setMinimumWidth(96);
 		QLineEdit* edit = new QLineEdit(
 			AppConfig::Instance()->getConfig("Para", name).toString(), box);
+		edit->setMinimumWidth(150);
 		m_paramEdits.append(edit);
 		grid->addWidget(label, row, col * 2);
 		grid->addWidget(edit, row, col * 2 + 1);
@@ -205,8 +253,11 @@ void StatusWindow::onPickerSyncStatus(int state, qint64 maxDiffUs,
 void StatusWindow::onPickerNewFile(const QString& file)
 {
 	if (m_table->rowCount() > 0) {
-		m_table->item(0, 5)->setText(
-			QDateTime::currentDateTime().toString("hh:mm:ss ") + QFileInfo(file).fileName());
+		const QString text = QDateTime::currentDateTime().toString("hh:mm:ss ")
+			+ QFileInfo(file).fileName();
+		QTableWidgetItem* item = m_table->item(0, 5);
+		item->setText(text);
+		item->setToolTip(text);
 	}
 	m_log->appendPlainText(QStringLiteral("[事件] 新mseed: %1").arg(file));
 }

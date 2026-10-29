@@ -43,29 +43,40 @@ QLabel {
 QLabel:disabled {
     color: #86909c;
 }
+QLabel#syncLabel {
+    background-color: #ffffff;
+    border: 2px solid #8fa0b8;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: @BASE@px;
+    font-weight: bold;
+    color: #1c6ef2;
+}
 QGroupBox {
     background-color: #ffffff;
-    border: 1px solid #e6e7ef;
-    border-radius: 8px;
-    margin-top: 14px;
-    padding: 12px;
+    border: 2px solid #8fa0b8;
+    border-radius: 10px;
+    margin-top: 26px;
+    padding: 6px 10px 10px 10px;
     font-weight: 600;
     color: #282b36;
 }
 QGroupBox::title {
     subcontrol-origin: margin;
     subcontrol-position: top left;
-    left: 12px;
-    padding: 0 6px;
+    left: 14px;
+    top: 0px;
+    padding: 2px 10px;
     color: #1c6ef2;
+    background-color: #f5f7fa;
     font-size: @TITLE@px;
-    font-weight: 600;
+    font-weight: bold;
 }
 QLineEdit, QSpinBox, QDoubleSpinBox {
-    background-color: #f7f8fa;
-    border: 1px solid #e6e7ef;
+    background-color: #ffffff;
+    border: 2px solid #8fa0b8;
     border-radius: 6px;
-    padding: 4px 8px;
+    padding: 6px 10px;
     min-height: @INPUTH@px;
     color: #282b36;
     font-size: @INPUT@px;
@@ -76,7 +87,7 @@ QLineEdit:hover, QSpinBox:hover, QDoubleSpinBox:hover {
     border-color: #1c6ef2;
 }
 QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus {
-    border-color: #1c6ef2;
+    border: 2px solid #1c6ef2;
     background-color: #ffffff;
 }
 QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled {
@@ -123,34 +134,20 @@ QCheckBox {
     spacing: 8px;
     font-size: @BASE@px;
 }
-QCheckBox::indicator {
-    width: 18px;
-    height: 18px;
-    border: 1px solid #c6d5d9;
-    border-radius: 3px;
-    background-color: #ffffff;
-}
-QCheckBox::indicator:hover {
-    border-color: #1c6ef2;
-}
-QCheckBox::indicator:checked {
-    background-color: #1c6ef2;
-    border-color: #1c6ef2;
-}
 QTableWidget, QTableView {
     background-color: #ffffff;
     alternate-background-color: #fafbfd;
-    border: 1px solid #e6e7ef;
+    border: 2px solid #8fa0b8;
     border-radius: 8px;
-    gridline-color: #eef0f4;
+    gridline-color: #dfe3ea;
     color: #282b36;
     font-size: @TABLE@px;
     selection-background-color: #ecf2fe;
     selection-color: #1c6ef2;
 }
 QTableWidget::item, QTableView::item {
-    padding: 8px 6px;
-    border-bottom: 1px solid #f0f2f5;
+    padding: 10px 8px;
+    border-bottom: 1px solid #eef0f4;
 }
 QTableWidget::item:selected, QTableView::item:selected {
     background-color: #ecf2fe;
@@ -158,11 +155,13 @@ QTableWidget::item:selected, QTableView::item:selected {
 }
 QHeaderView::section {
     background-color: #e7e9ed;
-    color: #4e5969;
+    color: #282b36;
     border: none;
-    padding: 8px 6px;
+    border-right: 1px solid #d5dae3;
+    border-bottom: 2px solid #8fa0b8;
+    padding: 10px 8px;
     font-size: @HEADER@px;
-    font-weight: 600;
+    font-weight: bold;
 }
 QTableCornerButton::section {
     background-color: #e7e9ed;
@@ -170,7 +169,7 @@ QTableCornerButton::section {
 }
 QListWidget {
     background-color: #ffffff;
-    border: 1px solid #e6e7ef;
+    border: 2px solid #8fa0b8;
     border-radius: 8px;
     padding: 6px;
     color: #282b36;
@@ -188,7 +187,7 @@ QListWidget::item:selected {
     color: #1c6ef2;
 }
 QTabWidget::pane {
-    border: 1px solid #e6e7ef;
+    border: 2px solid #8fa0b8;
     border-radius: 8px;
     background-color: #ffffff;
     top: -1px;
@@ -214,7 +213,7 @@ QTabBar::tab:selected {
 }
 QPlainTextEdit, QTextEdit {
     background-color: #ffffff;
-    border: 1px solid #e6e7ef;
+    border: 2px solid #8fa0b8;
     border-radius: 8px;
     padding: 6px;
     color: #282b36;
@@ -292,7 +291,7 @@ QToolTip {
 // Acquisition device: larger fonts and touch-friendly controls.
 inline QString deviceSheet()
 {
-    return makeSheet(Metrics{16, 16, 15, 16, 40, 16, 42, 13, 16});
+    return makeSheet(Metrics{16, 16, 15, 16, 40, 16, 42, 14, 18});
 }
 
 // Console: denser layout, but same visual language.

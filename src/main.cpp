@@ -128,7 +128,7 @@ int main(int argc, char* argv[])
 	// 精简界面：站点/通道在线状态 + 同步状态 + 最简参数设置
 	StatusWindow window;
 	window.setPickder(pickder);
-	window.show();
+	window.showMaximized();
 
 	// 启动所有站点连接（精简版无登录流程）
 	tcpMgr->startAll();
