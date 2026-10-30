@@ -122,7 +122,7 @@ void MseedConsumer::requestNext()
             const qint64 now = QDateTime::currentMSecsSinceEpoch();
             if (now - m_lastNoFileLogMs >= 60000) {
                 m_lastNoFileLogMs = now;
-                emit logMessage(QStringLiteral("暂无新文件，当前游标：%1").arg(m_cursor));
+                //emit logMessage(QStringLiteral("暂无新文件，当前游标：%1").arg(m_cursor));
             }
             scheduleNext();
             return;

@@ -26,6 +26,7 @@ private:
     QByteArray controlToken() const;
     QNetworkRequest apiRequest(const QString& path) const;
     void loadProjectInfo();
+    void loadOutputDirForDevice(const QString& id);
     void setRunning(bool running); void showDevice(const QJsonObject& object);
     void handleNetworkError(const QString& operation, QNetworkReply* reply);
     void appendLogThrottled(const QString& message);
@@ -36,8 +37,11 @@ private:
     QString m_formDeviceId;                              // 参数表单当前对应的设备
     QString m_projectName;                               // 当前连接的项目名
     QString m_lastDeviceSnapshot;                        // 设备在线状态快照
-    qint64 m_lastRefreshSuccessLogMs = 0;                // 成功日志最多每分钟一条
+    bool m_deviceListLogged = false;                     // 首轮成功日志只打一次
+    bool m_lastRefreshFailed = false;                    // 失败恢复后补一条成功日志
+    bool m_manualRefreshRequested = false;               // 手动点击刷新
     QString m_lastSelectedLogId;                         // 已记录过选择的设备
+    QString m_outputDirDeviceId;                         // 保存目录当前对应的设备
     QString m_statusLogDeviceId;                         // 设备状态日志对应设备
     bool m_statusLogOnline = false;
     bool m_statusLogValid = false;

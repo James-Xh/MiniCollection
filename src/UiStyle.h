@@ -94,6 +94,10 @@ QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled {
     color: #86909c;
     background-color: #eef0f4;
 }
+QLineEdit:read-only {
+    color: #4e5969;
+    background-color: #eef1f6;
+}
 QPushButton {
     background-color: #1c6ef2;
     color: #ffffff;

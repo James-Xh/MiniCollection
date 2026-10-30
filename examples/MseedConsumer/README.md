@@ -54,10 +54,27 @@ downloadToken=你的MSEED_DOWNLOAD_TOKEN
 pollSeconds=5
 outputDir=data/mseed
 stateFile=data/state/cursor.txt
+
+[DeviceDirs]
+; 可选：为每台设备指定确切的保存目录
+; 01=D:\mseed\device01
 ```
 
 相对路径以 `MseedConsumer.exe` 所在目录为基准。程序启动后自动按 `pollSeconds` 轮询，
-也可以在界面修改配置并点击“保存”和“启动”。界面显示当前状态、已确认游标、最近下载文件和日志。
+也可以在界面修改配置并点击“保存”和“启动”。
+
+“mseed消费”页的“设备保存目录”就是该设备的**确切保存目录**。为保证路径有效，该字段为只读，
+点击“浏览...”选择电脑上的任意目录。目录选到哪里，mseed 就保存到哪里，不会再自动追加设备编号。
+每台设备的路径保存在 `config.ini` 的 `[DeviceDirs]` 段，例如：
+
+```ini
+[DeviceDirs]
+01=D:\mseed\device01
+02=E:\data\device02
+```
+
+`[Consumer] outputDir` 只作为没有单独设置设备目录时的默认模板，默认值为 `data/mseed`。
+修改保存目录后，停止并重新启动“获取数据”即可生效。
 
 `downloadToken` 同时作为项目控制令牌，用于设备列表、参数下发和状态查询；连接成功后
 窗口标题会显示服务端返回的项目名。一个控制台只填写一个项目的地址和令牌，多个项目请使用

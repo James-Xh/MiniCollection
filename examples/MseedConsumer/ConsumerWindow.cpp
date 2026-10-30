@@ -5,6 +5,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QGridLayout>
@@ -79,13 +80,12 @@ ConsumerWindow::ConsumerWindow(QWidget* parent) : QMainWindow(parent),
     QGroupBox* serverBox=new QGroupBox(QStringLiteral("服务器"),central); QGridLayout* sf=new QGridLayout(serverBox);
     sf->setHorizontalSpacing(12); sf->setVerticalSpacing(8);
     m_serverEdit=new QLineEdit(serverBox); m_tokenEdit=new QLineEdit(serverBox); m_tokenEdit->setEchoMode(QLineEdit::Password);
-    m_outputEdit=new QLineEdit(serverBox); m_stateEdit=new QLineEdit(serverBox); m_intervalSpin=new QSpinBox(serverBox);
+    m_stateEdit=new QLineEdit(serverBox); m_intervalSpin=new QSpinBox(serverBox);
     m_intervalSpin->setRange(1,3600); m_intervalSpin->setSuffix(QStringLiteral(" 秒"));
     sf->addWidget(new QLabel(QStringLiteral("地址"),serverBox),0,0); sf->addWidget(m_serverEdit,0,1);
     sf->addWidget(new QLabel(QStringLiteral("下载令牌"),serverBox),0,2); sf->addWidget(m_tokenEdit,0,3);
-    sf->addWidget(new QLabel(QStringLiteral("文件根目录"),serverBox),1,0); sf->addWidget(m_outputEdit,1,1);
-    sf->addWidget(new QLabel(QStringLiteral("游标根目录"),serverBox),1,2); sf->addWidget(m_stateEdit,1,3);
-    sf->addWidget(new QLabel(QStringLiteral("轮询间隔"),serverBox),2,0); sf->addWidget(m_intervalSpin,2,1);
+    sf->addWidget(new QLabel(QStringLiteral("游标根目录"),serverBox),1,0); sf->addWidget(m_stateEdit,1,1);
+    sf->addWidget(new QLabel(QStringLiteral("轮询间隔"),serverBox),1,2); sf->addWidget(m_intervalSpin,1,3);
     sf->setColumnStretch(1,1); sf->setColumnStretch(3,1);
     root->addWidget(serverBox);
     QHBoxLayout* commands=new QHBoxLayout; m_saveButton=new QPushButton(QStringLiteral("保存"),central);
@@ -132,40 +132,71 @@ ConsumerWindow::ConsumerWindow(QWidget* parent) : QMainWindow(parent),
     pf->addWidget(submit,uploadRow+1,0,1,4);
     pf->setColumnStretch(1,1);pf->setColumnStretch(3,1);
     tabs->addTab(parameterPage,QStringLiteral("参数设置"));
-    QWidget* filesPage=new QWidget(tabs);QFormLayout* ff=new QFormLayout(filesPage);m_statusLabel=new QLabel(QStringLiteral("未启动"),filesPage);m_cursorLabel=new QLabel("0",filesPage);m_lastFileLabel=new QLabel("-",filesPage);m_lastFileLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);ff->addRow(QStringLiteral("数据获取状态"),m_statusLabel);ff->addRow(QStringLiteral("已确认游标"),m_cursorLabel);ff->addRow(QStringLiteral("最近文件"),m_lastFileLabel);tabs->addTab(filesPage,QStringLiteral("mseed消费"));
+    QWidget* filesPage=new QWidget(tabs);QFormLayout* ff=new QFormLayout(filesPage);
+    m_outputEdit=new QLineEdit(filesPage);m_outputEdit->setReadOnly(true);m_outputEdit->setPlaceholderText(QStringLiteral("请选择设备后浏览保存目录"));m_outputEdit->setToolTip(QStringLiteral("点击右侧“浏览...”选择保存目录"));
+    QPushButton* browse=new QPushButton(QStringLiteral("浏览..."),filesPage);browse->setObjectName("secondaryButton");
+    QHBoxLayout* outputLay=new QHBoxLayout;outputLay->setContentsMargins(0,0,0,0);outputLay->addWidget(m_outputEdit,1);outputLay->addWidget(browse);
+    m_statusLabel=new QLabel(QStringLiteral("未启动"),filesPage);m_cursorLabel=new QLabel("0",filesPage);m_lastFileLabel=new QLabel("-",filesPage);m_lastFileLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    ff->addRow(QStringLiteral("设备保存目录"),outputLay);
+    ff->addRow(QStringLiteral("数据获取状态"),m_statusLabel);ff->addRow(QStringLiteral("已确认游标"),m_cursorLabel);ff->addRow(QStringLiteral("最近文件"),m_lastFileLabel);tabs->addTab(filesPage,QStringLiteral("mseed消费"));
+    connect(browse,&QPushButton::clicked,this,[this](){
+        const QString id=selectedDeviceId();
+        if(id.isEmpty()){
+            QMessageBox::information(this,QStringLiteral("设备保存目录"),QStringLiteral("请先选择设备，再设置保存目录"));
+            return;
+        }
+        QString start=m_outputEdit->text().trimmed();
+        if(!QFileInfo(start).isDir())start=QCoreApplication::applicationDirPath();
+        const QString dir=QFileDialog::getExistingDirectory(this,QStringLiteral("选择mseed保存目录"),start);
+        if(dir.isEmpty())return;
+        m_outputEdit->setText(QDir::toNativeSeparators(dir));
+        QSettings s(m_configPath,QSettings::IniFormat);
+        s.setValue("DeviceDirs/"+id,m_outputEdit->text().trimmed());
+        s.sync();
+        appendLog(QStringLiteral("设备 %1 保存目录已更新：%2（重新启动获取数据后生效）").arg(id,m_outputEdit->text().trimmed()));
+    });
     split->addWidget(tabs);split->setStretchFactor(1,1);root->addWidget(split,3);
     m_logEdit=new QPlainTextEdit(central);m_logEdit->setReadOnly(true);m_logEdit->setMaximumBlockCount(500);m_logEdit->setMinimumHeight(180);root->addWidget(m_logEdit,2);setCentralWidget(central);
 
-    connect(m_saveButton,&QPushButton::clicked,this,&ConsumerWindow::saveSettings);connect(m_startButton,&QPushButton::clicked,this,&ConsumerWindow::startConsumer);connect(m_stopButton,&QPushButton::clicked,this,&ConsumerWindow::stopConsumer);connect(refresh,&QPushButton::clicked,this,&ConsumerWindow::refreshDevices);connect(add,&QPushButton::clicked,this,&ConsumerWindow::addDevice);connect(remove,&QPushButton::clicked,this,&ConsumerWindow::removeDevice);connect(m_deviceList,&QListWidget::itemSelectionChanged,this,&ConsumerWindow::onDeviceSelected);connect(submit,&QPushButton::clicked,this,&ConsumerWindow::submitParameters);connect(m_refreshTimer,&QTimer::timeout,this,&ConsumerWindow::refreshDevices);
+    connect(m_saveButton,&QPushButton::clicked,this,&ConsumerWindow::saveSettings);connect(m_startButton,&QPushButton::clicked,this,&ConsumerWindow::startConsumer);connect(m_stopButton,&QPushButton::clicked,this,&ConsumerWindow::stopConsumer);connect(refresh,&QPushButton::clicked,this,[this](){m_manualRefreshRequested=true;refreshDevices();});connect(add,&QPushButton::clicked,this,&ConsumerWindow::addDevice);connect(remove,&QPushButton::clicked,this,&ConsumerWindow::removeDevice);connect(m_deviceList,&QListWidget::itemSelectionChanged,this,&ConsumerWindow::onDeviceSelected);connect(submit,&QPushButton::clicked,this,&ConsumerWindow::submitParameters);connect(m_refreshTimer,&QTimer::timeout,this,&ConsumerWindow::refreshDevices);
     createDefaultConfig();loadSettings();setRunning(false);m_refreshTimer->start(5000);appendLog(QStringLiteral("采集控制台已启动，服务器地址：%1，设备轮询 %2 秒").arg(m_serverEdit->text().trimmed().isEmpty()?QStringLiteral("<空>"):m_serverEdit->text().trimmed()).arg(m_refreshTimer->interval()/1000));refreshDevices();
 }
 ConsumerWindow::~ConsumerWindow()=default;
 
 void ConsumerWindow::createDefaultConfig() const{if(QFile::exists(m_configPath))return;QSettings s(m_configPath,QSettings::IniFormat);s.setValue("Server/url","http://39.96.41.239:9002");s.setValue("Server/downloadToken","");s.remove("Server/projectToken");s.setValue("Consumer/pollSeconds",5);s.setValue("Consumer/outputDir","data/mseed");s.setValue("Consumer/stateFile","data/state");s.sync();}
-void ConsumerWindow::loadSettings(){QSettings s(m_configPath,QSettings::IniFormat);m_serverEdit->setText(s.value("Server/url").toString());m_tokenEdit->setText(s.value("Server/downloadToken").toString());m_outputEdit->setText(s.value("Consumer/outputDir","data/mseed").toString());m_stateEdit->setText(s.value("Consumer/stateFile","data/state").toString());m_intervalSpin->setValue(s.value("Consumer/pollSeconds",5).toInt());m_uploadUrlEdit->setText(m_serverEdit->text());}
+void ConsumerWindow::loadSettings(){QSettings s(m_configPath,QSettings::IniFormat);m_serverEdit->setText(s.value("Server/url").toString());m_tokenEdit->setText(s.value("Server/downloadToken").toString());m_outputEdit->clear();m_stateEdit->setText(s.value("Consumer/stateFile","data/state").toString());m_intervalSpin->setValue(s.value("Consumer/pollSeconds",5).toInt());m_uploadUrlEdit->setText(m_serverEdit->text());m_outputDirDeviceId.clear();}
 void ConsumerWindow::saveSettings(){
     QSettings s(m_configPath,QSettings::IniFormat);
     s.setValue("Server/url",m_serverEdit->text().trimmed());
     s.setValue("Server/downloadToken",m_tokenEdit->text().trimmed());
     s.remove("Server/projectToken");
-    s.setValue("Consumer/outputDir",m_outputEdit->text().trimmed());
     s.setValue("Consumer/stateFile",m_stateEdit->text().trimmed());
     s.setValue("Consumer/pollSeconds",m_intervalSpin->value());
+    const QString deviceId=selectedDeviceId();
+    if(!deviceId.isEmpty()){
+        const QString outputDir=m_outputEdit->text().trimmed();
+        if(outputDir.isEmpty())s.remove("DeviceDirs/"+deviceId);
+        else s.setValue("DeviceDirs/"+deviceId,outputDir);
+    }
     s.sync();
     m_projectInfoLoaded=false;
     m_projectName.clear();
     m_formDeviceId.clear();
     m_lastConfigStatusKey.clear();
     m_lastDeviceSnapshot.clear();
-    m_lastRefreshSuccessLogMs=0;
+    m_deviceListLogged=false;
+    m_lastRefreshFailed=false;
+    m_manualRefreshRequested=false;
     m_lastSelectedLogId.clear();
     m_statusLogValid=false;
     setWindowTitle(QStringLiteral("采集控制台"));
     m_uploadUrlEdit->setText(m_serverEdit->text().trimmed());
     const QString server=m_serverEdit->text().trimmed();
-    appendLog(QStringLiteral("配置已保存：服务器=%1，下载令牌=%2")
+    appendLog(QStringLiteral("配置已保存：服务器=%1，下载令牌=%2，设备=%3，保存目录=%4")
         .arg(server.isEmpty()?QStringLiteral("<空>"):server,
-             m_tokenEdit->text().trimmed().isEmpty()?QStringLiteral("未填写"):QStringLiteral("已填写")));
+             m_tokenEdit->text().trimmed().isEmpty()?QStringLiteral("未填写"):QStringLiteral("已填写"),
+             deviceId.isEmpty()?QStringLiteral("-"):deviceId,
+             m_outputEdit->text().trimmed().isEmpty()?QStringLiteral("默认"):m_outputEdit->text().trimmed()));
 }
 QString ConsumerWindow::selectedDeviceId()const{return m_deviceList->currentItem()?m_deviceList->currentItem()->data(Qt::UserRole).toString():QString();}
 QString ConsumerWindow::apiUrl(const QString& path)const{QString base=m_serverEdit->text().trimmed();while(base.endsWith('/'))base.chop(1);return base+path;}
@@ -214,13 +245,14 @@ void ConsumerWindow::loadProjectInfo(){
 void ConsumerWindow::refreshDevices(){
     loadProjectInfo();
     if(m_serverEdit->text().trimmed().isEmpty()){
+        m_manualRefreshRequested=false;
         appendLogThrottled(QStringLiteral("刷新设备失败：服务器地址为空，请先填写并保存"));
         return;
     }
     QNetworkReply* r=m_network->get(apiRequest("/coalmine/devices"));
     NetTimeout::arm(r,kRequestTimeoutMs);
     connect(r,&QNetworkReply::finished,this,[this,r](){
-        if(r->error()!=QNetworkReply::NoError){handleNetworkError(QStringLiteral("刷新设备"),r);r->deleteLater();return;}
+        if(r->error()!=QNetworkReply::NoError){m_lastRefreshFailed=true;m_manualRefreshRequested=false;handleNetworkError(QStringLiteral("刷新设备"),r);r->deleteLater();return;}
         const QString selected=selectedDeviceId();
         const QJsonArray arr=QJsonDocument::fromJson(r->readAll()).array();
         int deviceCount=0;
@@ -245,10 +277,15 @@ void ConsumerWindow::refreshDevices(){
         }
         snapshot.sort();
         const QString state=snapshot.join(',');
-        const qint64 now=QDateTime::currentMSecsSinceEpoch();
-        if(state!=m_lastDeviceSnapshot||now-m_lastRefreshSuccessLogMs>=60000){
-            m_lastDeviceSnapshot=state;
-            m_lastRefreshSuccessLogMs=now;
+        const bool changed=state!=m_lastDeviceSnapshot;
+        const bool first=!m_deviceListLogged;
+        const bool manual=m_manualRefreshRequested;
+        const bool recovered=m_lastRefreshFailed;
+        m_lastDeviceSnapshot=state;
+        m_manualRefreshRequested=false;
+        m_lastRefreshFailed=false;
+        if(changed||first||manual||recovered){
+            m_deviceListLogged=true;
             if(deviceCount==0){
                 appendLog(QStringLiteral("设备列表刷新成功：当前项目暂无设备%1")
                     .arg(m_projectName.isEmpty()?QString():QStringLiteral("（%1）").arg(m_projectName)));
@@ -270,6 +307,7 @@ void ConsumerWindow::onDeviceSelected(){
         m_lastSelectedLogId=id;
         appendLog(QStringLiteral("已选择设备 %1，正在获取状态和配置").arg(id));
     }
+    if(id!=m_outputDirDeviceId)loadOutputDirForDevice(id);
     QNetworkReply* r=m_network->get(apiRequest("/coalmine/devices/"+id));
     NetTimeout::arm(r,kRequestTimeoutMs);
     connect(r,&QNetworkReply::finished,this,[this,r,id](){if(id!=selectedDeviceId()){r->deleteLater();return;}if(r->error()!=QNetworkReply::NoError)handleNetworkError(QStringLiteral("获取设备状态"),r);else showDevice(QJsonDocument::fromJson(r->readAll()).object());r->deleteLater();});
@@ -361,7 +399,13 @@ void ConsumerWindow::startConsumer(){
         return;
     }
     saveSettings();
-    const QString out=QDir(absoluteConfigPath(m_outputEdit->text().trimmed())).absoluteFilePath(id);
+    QString outRaw=m_outputEdit->text().trimmed();
+    if(outRaw.isEmpty()){
+        QSettings s(m_configPath,QSettings::IniFormat);
+        const QString root=s.value("Consumer/outputDir","data/mseed").toString().trimmed();
+        outRaw=QDir(root.isEmpty()?QStringLiteral("data/mseed"):root).filePath(id);
+    }
+    const QString out=absoluteConfigPath(outRaw);
     QString stateBase=absoluteConfigPath(m_stateEdit->text().trimmed());
     if(QFileInfo(stateBase).suffix().compare("txt",Qt::CaseInsensitive)==0)
         stateBase=QFileInfo(stateBase).absolutePath();
@@ -391,6 +435,19 @@ void ConsumerWindow::stopConsumer(){
 }
 void ConsumerWindow::appendLog(const QString& m){m_logEdit->appendPlainText(QStringLiteral("[%1] %2").arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss"),m));}
 QString ConsumerWindow::absoluteConfigPath(const QString& v)const{QFileInfo i(v);return i.isAbsolute()?i.absoluteFilePath():QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(v);}
+void ConsumerWindow::loadOutputDirForDevice(const QString& id){
+    if(!m_outputEdit)return;
+    QSettings s(m_configPath,QSettings::IniFormat);
+    QString path=s.value("DeviceDirs/"+id).toString().trimmed();
+    if(path.isEmpty()){
+        const QString root=s.value("Consumer/outputDir","data/mseed").toString().trimmed();
+        path=QDir(absoluteConfigPath(root.isEmpty()?QStringLiteral("data/mseed"):root)).absoluteFilePath(id);
+    }else{
+        path=absoluteConfigPath(path);
+    }
+    m_outputEdit->setText(QDir::toNativeSeparators(path));
+    m_outputDirDeviceId=id;
+}
 void ConsumerWindow::setRunning(bool running){m_startButton->setEnabled(!running);m_stopButton->setEnabled(running);}
 void ConsumerWindow::handleNetworkError(const QString& op,QNetworkReply* r){
     const int http=r->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
