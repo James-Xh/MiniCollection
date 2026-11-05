@@ -1,8 +1,13 @@
 #include "ConsumerWindow.h"
 #include "MseedConsumer.h"
 #include "NetworkReplyTimeout.h"
+#include <QAction>
+#include <QApplication>
+#include <QCloseEvent>
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDir>
 #include <QFile>
 #include <QFileDialog>
@@ -12,6 +17,7 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QIcon>
 #include <QInputDialog>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -19,16 +25,19 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMenu>
 #include <QMessageBox>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QPlainTextEdit>
+#include <QProcess>
 #include <QPushButton>
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QSplitter>
+#include <QSystemTrayIcon>
 #include <QTableWidget>
 #include <QTabWidget>
 #include <QTimer>
@@ -41,8 +50,10 @@ namespace {
 // 控制台接口都是轻量 JSON 请求，15 秒没有任何响应就判定失败并重试，
 // 避免 Qt 5.12 下请求悬挂导致界面一直停在“上一次结果”。
 const int kRequestTimeoutMs = 15000;
-// 完全相同的网络错误 20 秒内只记一次，防止 5 秒轮询把日志刷满。
+// 完全相同的网络错误 20 秒内只记一次，防止轮询把日志刷满。
 const qint64 kErrorRepeatMs = 20000;
+// 默认心跳/刷新间隔。设备列表和状态不再每 5 秒请求一次服务器。
+const int kDefaultHeartbeatSeconds = 30;
 
 // 服务端 last_seen_at 来自 SQLite CURRENT_TIMESTAMP，是 UTC 的
 // "yyyy-MM-dd HH:mm:ss" 且不带时区标记，必须按 UTC 解析后再转本地时间。
@@ -77,24 +88,17 @@ ConsumerWindow::ConsumerWindow(QWidget* parent) : QMainWindow(parent),
 {
     setWindowTitle(QStringLiteral("采集控制台")); resize(1050, 720);
     QWidget* central=new QWidget(this); QVBoxLayout* root=new QVBoxLayout(central);
-    QGroupBox* serverBox=new QGroupBox(QStringLiteral("服务器"),central); QGridLayout* sf=new QGridLayout(serverBox);
-    sf->setHorizontalSpacing(12); sf->setVerticalSpacing(8);
-    m_serverEdit=new QLineEdit(serverBox); m_tokenEdit=new QLineEdit(serverBox); m_tokenEdit->setEchoMode(QLineEdit::Password);
-    m_stateEdit=new QLineEdit(serverBox); m_intervalSpin=new QSpinBox(serverBox);
-    m_intervalSpin->setRange(1,3600); m_intervalSpin->setSuffix(QStringLiteral(" 秒"));
-    sf->addWidget(new QLabel(QStringLiteral("地址"),serverBox),0,0); sf->addWidget(m_serverEdit,0,1);
-    sf->addWidget(new QLabel(QStringLiteral("下载令牌"),serverBox),0,2); sf->addWidget(m_tokenEdit,0,3);
-    sf->addWidget(new QLabel(QStringLiteral("游标根目录"),serverBox),1,0); sf->addWidget(m_stateEdit,1,1);
-    sf->addWidget(new QLabel(QStringLiteral("轮询间隔"),serverBox),1,2); sf->addWidget(m_intervalSpin,1,3);
-    sf->setColumnStretch(1,1); sf->setColumnStretch(3,1);
-    root->addWidget(serverBox);
     QHBoxLayout* commands=new QHBoxLayout; m_saveButton=new QPushButton(QStringLiteral("保存"),central);
     m_startButton=new QPushButton(QStringLiteral("启动获取数据"),central); m_stopButton=new QPushButton(QStringLiteral("停止获取数据"),central);
     QPushButton* refresh=new QPushButton(QStringLiteral("刷新设备"),central);
+    QPushButton* serverSettings=new QPushButton(QStringLiteral("服务器参数设置"),central);
     m_saveButton->setObjectName("secondaryButton");
     m_stopButton->setObjectName("dangerButton");
     refresh->setObjectName("secondaryButton");
-    commands->addWidget(m_saveButton);commands->addWidget(m_startButton);commands->addWidget(m_stopButton);commands->addWidget(refresh);commands->addStretch();root->addLayout(commands);
+    serverSettings->setObjectName("secondaryButton");
+    serverSettings->setToolTip(QStringLiteral("修改服务器地址、令牌、心跳刷新间隔等参数"));
+    commands->addWidget(m_saveButton);commands->addWidget(m_startButton);commands->addWidget(m_stopButton);commands->addWidget(refresh);
+    commands->addStretch();commands->addWidget(serverSettings);root->addLayout(commands);
 
     QSplitter* split=new QSplitter(central); QWidget* left=new QWidget(split); QVBoxLayout* ll=new QVBoxLayout(left);
     m_deviceList=new QListWidget(left); ll->addWidget(m_deviceList,1); QHBoxLayout* dc=new QHBoxLayout;
@@ -158,26 +162,100 @@ ConsumerWindow::ConsumerWindow(QWidget* parent) : QMainWindow(parent),
     split->addWidget(tabs);split->setStretchFactor(1,1);root->addWidget(split,3);
     m_logEdit=new QPlainTextEdit(central);m_logEdit->setReadOnly(true);m_logEdit->setMaximumBlockCount(500);m_logEdit->setMinimumHeight(180);root->addWidget(m_logEdit,2);setCentralWidget(central);
 
-    connect(m_saveButton,&QPushButton::clicked,this,&ConsumerWindow::saveSettings);connect(m_startButton,&QPushButton::clicked,this,&ConsumerWindow::startConsumer);connect(m_stopButton,&QPushButton::clicked,this,&ConsumerWindow::stopConsumer);connect(refresh,&QPushButton::clicked,this,[this](){m_manualRefreshRequested=true;refreshDevices();});connect(add,&QPushButton::clicked,this,&ConsumerWindow::addDevice);connect(remove,&QPushButton::clicked,this,&ConsumerWindow::removeDevice);connect(m_deviceList,&QListWidget::itemSelectionChanged,this,&ConsumerWindow::onDeviceSelected);connect(submit,&QPushButton::clicked,this,&ConsumerWindow::submitParameters);connect(m_refreshTimer,&QTimer::timeout,this,&ConsumerWindow::refreshDevices);
-    createDefaultConfig();loadSettings();setRunning(false);m_refreshTimer->start(5000);appendLog(QStringLiteral("采集控制台已启动，服务器地址：%1，设备轮询 %2 秒").arg(m_serverEdit->text().trimmed().isEmpty()?QStringLiteral("<空>"):m_serverEdit->text().trimmed()).arg(m_refreshTimer->interval()/1000));refreshDevices();
+    connect(m_saveButton,&QPushButton::clicked,this,&ConsumerWindow::saveSettings);connect(m_startButton,&QPushButton::clicked,this,&ConsumerWindow::startConsumer);connect(m_stopButton,&QPushButton::clicked,this,&ConsumerWindow::stopConsumer);connect(refresh,&QPushButton::clicked,this,[this](){m_manualRefreshRequested=true;refreshDevices();});connect(serverSettings,&QPushButton::clicked,this,&ConsumerWindow::showServerSettings);connect(add,&QPushButton::clicked,this,&ConsumerWindow::addDevice);connect(remove,&QPushButton::clicked,this,&ConsumerWindow::removeDevice);connect(m_deviceList,&QListWidget::itemSelectionChanged,this,&ConsumerWindow::onDeviceSelected);connect(submit,&QPushButton::clicked,this,&ConsumerWindow::submitParameters);connect(m_refreshTimer,&QTimer::timeout,this,&ConsumerWindow::refreshDevices);
+    createDefaultConfig();createServerSettingsDialog();loadSettings();setRunning(false);createTrayIcon();applyHeartbeatInterval();appendLog(QStringLiteral("采集控制台已启动，服务器地址：%1，心跳/刷新间隔 %2 秒").arg(m_serverEdit->text().trimmed().isEmpty()?QStringLiteral("<空>"):m_serverEdit->text().trimmed()).arg(heartbeatSeconds()));refreshDevices();startWatchdog();
 }
-ConsumerWindow::~ConsumerWindow()=default;
+ConsumerWindow::~ConsumerWindow(){
+    if(m_consumer)m_consumer->stop();
+    stopWatchdog();
+    if(m_tray)m_tray->hide();
+}
 
-void ConsumerWindow::createDefaultConfig() const{if(QFile::exists(m_configPath))return;QSettings s(m_configPath,QSettings::IniFormat);s.setValue("Server/url","http://39.96.41.239:9002");s.setValue("Server/downloadToken","");s.remove("Server/projectToken");s.setValue("Consumer/pollSeconds",5);s.setValue("Consumer/outputDir","data/mseed");s.setValue("Consumer/stateFile","data/state");s.sync();}
-void ConsumerWindow::loadSettings(){QSettings s(m_configPath,QSettings::IniFormat);m_serverEdit->setText(s.value("Server/url").toString());m_tokenEdit->setText(s.value("Server/downloadToken").toString());m_outputEdit->clear();m_stateEdit->setText(s.value("Consumer/stateFile","data/state").toString());m_intervalSpin->setValue(s.value("Consumer/pollSeconds",5).toInt());m_uploadUrlEdit->setText(m_serverEdit->text());m_outputDirDeviceId.clear();}
-void ConsumerWindow::saveSettings(){
+void ConsumerWindow::createDefaultConfig() const{
+    if(QFile::exists(m_configPath))return;
+    QSettings s(m_configPath,QSettings::IniFormat);
+    s.setValue("Server/url","http://39.96.41.239:9002");
+    s.setValue("Server/downloadToken","");
+    s.setValue("Server/heartbeatSeconds",kDefaultHeartbeatSeconds);
+    s.remove("Server/projectToken");
+    s.setValue("Consumer/pollSeconds",5);
+    s.setValue("Consumer/outputDir","data/mseed");
+    s.setValue("Consumer/stateFile","data/state");
+    s.sync();
+}
+
+void ConsumerWindow::createServerSettingsDialog(){
+    m_serverDialog=new QDialog(this);
+    m_serverDialog->setWindowTitle(QStringLiteral("服务器参数设置"));
+    m_serverDialog->setModal(true);
+    m_serverDialog->setMinimumWidth(560);
+    QVBoxLayout* lay=new QVBoxLayout(m_serverDialog);
+    lay->setSpacing(14);
+    QFormLayout* form=new QFormLayout;
+    form->setHorizontalSpacing(18);form->setVerticalSpacing(12);
+    m_serverEdit=new QLineEdit(m_serverDialog);
+    m_serverEdit->setPlaceholderText(QStringLiteral("http://服务器地址:端口"));
+    m_tokenEdit=new QLineEdit(m_serverDialog);
+    m_tokenEdit->setEchoMode(QLineEdit::Password);
+    m_stateEdit=new QLineEdit(m_serverDialog);
+    m_intervalSpin=new QSpinBox(m_serverDialog);
+    m_intervalSpin->setRange(1,3600);m_intervalSpin->setSuffix(QStringLiteral(" 秒"));
+    m_intervalSpin->setToolTip(QStringLiteral("mseed 数据下载轮询间隔"));
+    m_heartbeatSpin=new QSpinBox(m_serverDialog);
+    m_heartbeatSpin->setRange(5,3600);m_heartbeatSpin->setSuffix(QStringLiteral(" 秒"));
+    m_heartbeatSpin->setToolTip(QStringLiteral("控制台向服务器刷新设备/状态的心跳间隔。适当加大可降低服务器压力"));
+    form->addRow(QStringLiteral("服务器地址"),m_serverEdit);
+    form->addRow(QStringLiteral("下载令牌"),m_tokenEdit);
+    form->addRow(QStringLiteral("游标根目录"),m_stateEdit);
+    form->addRow(QStringLiteral("数据轮询间隔"),m_intervalSpin);
+    form->addRow(QStringLiteral("心跳/刷新间隔"),m_heartbeatSpin);
+    lay->addLayout(form);
+    QLabel* hint=new QLabel(QStringLiteral("心跳/刷新间隔控制“刷新设备”和设备状态的自动请求频率，默认 %1 秒。修改后立即生效。").arg(kDefaultHeartbeatSeconds),m_serverDialog);
+    hint->setWordWrap(true);
+    hint->setStyleSheet(QStringLiteral("color:#86909c;"));
+    lay->addWidget(hint);
+    QDialogButtonBox* buttons=new QDialogButtonBox(QDialogButtonBox::Ok|QDialogButtonBox::Cancel,m_serverDialog);
+    buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("保存"));
+    buttons->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("取消"));
+    connect(buttons,&QDialogButtonBox::accepted,m_serverDialog,&QDialog::accept);
+    connect(buttons,&QDialogButtonBox::rejected,m_serverDialog,&QDialog::reject);
+    lay->addWidget(buttons);
+}
+
+void ConsumerWindow::loadServerSettings(){
+    QSettings s(m_configPath,QSettings::IniFormat);
+    if(m_serverEdit)m_serverEdit->setText(s.value("Server/url").toString());
+    if(m_tokenEdit)m_tokenEdit->setText(s.value("Server/downloadToken").toString());
+    if(m_stateEdit)m_stateEdit->setText(s.value("Consumer/stateFile","data/state").toString());
+    if(m_intervalSpin)m_intervalSpin->setValue(s.value("Consumer/pollSeconds",5).toInt());
+    if(m_heartbeatSpin)m_heartbeatSpin->setValue(qMax(5,s.value("Server/heartbeatSeconds",kDefaultHeartbeatSeconds).toInt()));
+}
+
+void ConsumerWindow::loadSettings(){
+    loadServerSettings();
+    m_outputEdit->clear();
+    m_uploadUrlEdit->setText(m_serverEdit->text());
+    m_outputDirDeviceId.clear();
+}
+
+int ConsumerWindow::heartbeatSeconds() const{
+    return m_heartbeatSpin?qBound(5,m_heartbeatSpin->value(),3600):kDefaultHeartbeatSeconds;
+}
+
+void ConsumerWindow::applyHeartbeatInterval(){
+    if(!m_refreshTimer)return;
+    m_refreshTimer->setInterval(heartbeatSeconds()*1000);
+    if(!m_refreshTimer->isActive())m_refreshTimer->start();
+}
+
+void ConsumerWindow::saveServerSettings(){
     QSettings s(m_configPath,QSettings::IniFormat);
     s.setValue("Server/url",m_serverEdit->text().trimmed());
     s.setValue("Server/downloadToken",m_tokenEdit->text().trimmed());
+    s.setValue("Server/heartbeatSeconds",heartbeatSeconds());
     s.remove("Server/projectToken");
     s.setValue("Consumer/stateFile",m_stateEdit->text().trimmed());
     s.setValue("Consumer/pollSeconds",m_intervalSpin->value());
-    const QString deviceId=selectedDeviceId();
-    if(!deviceId.isEmpty()){
-        const QString outputDir=m_outputEdit->text().trimmed();
-        if(outputDir.isEmpty())s.remove("DeviceDirs/"+deviceId);
-        else s.setValue("DeviceDirs/"+deviceId,outputDir);
-    }
     s.sync();
     m_projectInfoLoaded=false;
     m_projectName.clear();
@@ -189,13 +267,43 @@ void ConsumerWindow::saveSettings(){
     m_manualRefreshRequested=false;
     m_lastSelectedLogId.clear();
     m_statusLogValid=false;
+    m_lastErrorKey.clear();
+    m_lastErrorMs=0;
     setWindowTitle(QStringLiteral("采集控制台"));
     m_uploadUrlEdit->setText(m_serverEdit->text().trimmed());
+    applyHeartbeatInterval();
+}
+
+void ConsumerWindow::showServerSettings(){
+    if(!m_serverDialog)return;
+    if(m_serverDialog->exec()!=QDialog::Accepted){
+        // 取消时恢复为磁盘上的旧值，避免未保存的参数立刻影响请求。
+        loadServerSettings();
+        return;
+    }
+    saveServerSettings();
+    appendLog(QStringLiteral("服务器参数已保存：服务器=%1，心跳/刷新间隔 %2 秒")
+        .arg(m_serverEdit->text().trimmed().isEmpty()?QStringLiteral("<空>"):m_serverEdit->text().trimmed())
+        .arg(heartbeatSeconds()));
+    refreshDevices();
+}
+
+void ConsumerWindow::saveSettings(){
+    saveServerSettings();
+    QSettings s(m_configPath,QSettings::IniFormat);
+    const QString deviceId=selectedDeviceId();
+    if(!deviceId.isEmpty()){
+        const QString outputDir=m_outputEdit->text().trimmed();
+        if(outputDir.isEmpty())s.remove("DeviceDirs/"+deviceId);
+        else s.setValue("DeviceDirs/"+deviceId,outputDir);
+    }
+    s.sync();
     const QString server=m_serverEdit->text().trimmed();
-    appendLog(QStringLiteral("配置已保存：服务器=%1，下载令牌=%2，设备=%3，保存目录=%4")
+    appendLog(QStringLiteral("配置已保存：服务器=%1，下载令牌=%2，心跳=%3 秒，设备=%4，保存目录=%5")
         .arg(server.isEmpty()?QStringLiteral("<空>"):server,
-             m_tokenEdit->text().trimmed().isEmpty()?QStringLiteral("未填写"):QStringLiteral("已填写"),
-             deviceId.isEmpty()?QStringLiteral("-"):deviceId,
+             m_tokenEdit->text().trimmed().isEmpty()?QStringLiteral("未填写"):QStringLiteral("已填写"))
+        .arg(heartbeatSeconds())
+        .arg(deviceId.isEmpty()?QStringLiteral("-"):deviceId,
              m_outputEdit->text().trimmed().isEmpty()?QStringLiteral("默认"):m_outputEdit->text().trimmed()));
 }
 QString ConsumerWindow::selectedDeviceId()const{return m_deviceList->currentItem()?m_deviceList->currentItem()->data(Qt::UserRole).toString():QString();}
@@ -465,3 +573,106 @@ void ConsumerWindow::appendLogThrottled(const QString& message){
     m_lastErrorKey=message;m_lastErrorMs=now;
     appendLog(message);
 }
+
+void ConsumerWindow::createTrayIcon(){
+    if(!QSystemTrayIcon::isSystemTrayAvailable()){
+        appendLog(QStringLiteral("系统托盘不可用：关闭窗口将直接退出控制台"));
+        return;
+    }
+    QIcon icon=windowIcon();
+    if(icon.isNull()&&qApp)icon=qApp->windowIcon();
+    if(icon.isNull())icon=QIcon(QDir(QCoreApplication::applicationDirPath()).filePath("app.ico"));
+    m_tray=new QSystemTrayIcon(icon,this);
+    m_tray->setToolTip(QStringLiteral("采集控制台"));
+    QMenu* menu=new QMenu(this);
+    m_trayShowAction=menu->addAction(QStringLiteral("显示控制台"));
+    menu->addSeparator();
+    m_trayQuitAction=menu->addAction(QStringLiteral("退出控制台"));
+    connect(m_trayShowAction,&QAction::triggered,this,&ConsumerWindow::showMainWindow);
+    connect(m_trayQuitAction,&QAction::triggered,this,&ConsumerWindow::quitFromTray);
+    m_tray->setContextMenu(menu);
+    connect(m_tray,&QSystemTrayIcon::activated,this,[this](QSystemTrayIcon::ActivationReason reason){
+        if(reason==QSystemTrayIcon::Trigger||reason==QSystemTrayIcon::DoubleClick)
+            showMainWindow();
+    });
+    m_tray->show();
+}
+
+void ConsumerWindow::showMainWindow(){
+    showNormal();
+    raise();
+    activateWindow();
+}
+
+void ConsumerWindow::quitFromTray(){
+    m_quitRequested=true;
+    if(m_consumer)stopConsumer();
+    stopWatchdog();
+    if(m_tray)m_tray->hide();
+    QCoreApplication::quit();
+}
+
+void ConsumerWindow::closeEvent(QCloseEvent* event){
+    // 点击窗口关闭按钮：最小化到托盘；只有托盘菜单“退出控制台”才彻底退出。
+    if(m_quitRequested){
+        stopWatchdog();
+        event->accept();
+        QCoreApplication::quit();
+        return;
+    }
+    if(!QSystemTrayIcon::isSystemTrayAvailable()||!m_tray){
+        stopWatchdog();
+        event->accept();
+        QCoreApplication::quit();
+        return;
+    }
+    event->ignore();
+    hide();
+    if(!m_trayHintShown){
+        m_trayHintShown=true;
+        m_tray->showMessage(QStringLiteral("采集控制台"),
+            QStringLiteral("控制台已最小化到任务栏托盘。右键托盘图标选择“退出控制台”可彻底关闭。"),
+            QSystemTrayIcon::Information,4000);
+    }
+}
+
+void ConsumerWindow::startWatchdog(){
+#ifdef Q_OS_WIN
+    if(!m_watchdogMarker.isEmpty())return;
+    const QString appDir=QCoreApplication::applicationDirPath();
+    const QString watchdogExe=QDir(appDir).filePath(QStringLiteral("MseedConsumerWatchdog.exe"));
+    if(!QFileInfo::exists(watchdogExe)){
+        appendLog(QStringLiteral("未找到看门狗程序 MseedConsumerWatchdog.exe，本次不启用异常重启保护"));
+        return;
+    }
+    const QString marker=QDir(appDir).filePath(QStringLiteral("data/watchdog/console.marker"));
+    QDir().mkpath(QFileInfo(marker).absolutePath());
+    QFile markerFile(marker);
+    if(!markerFile.open(QIODevice::WriteOnly|QIODevice::Truncate|QIODevice::Text)){
+        appendLog(QStringLiteral("看门狗 marker 文件创建失败：%1").arg(marker));
+        return;
+    }
+    markerFile.write(QByteArray::number(QCoreApplication::applicationPid()));
+    markerFile.close();
+    m_watchdogMarker=marker;
+    const QStringList args={QStringLiteral("--app"),QCoreApplication::applicationFilePath(),
+        QStringLiteral("--marker"),marker,
+        QStringLiteral("--pid"),QString::number(QCoreApplication::applicationPid())};
+    qint64 watchdogPid=0;
+    if(!QProcess::startDetached(watchdogExe,args,appDir,&watchdogPid)){
+        appendLog(QStringLiteral("看门狗启动失败：%1").arg(watchdogExe));
+        QFile::remove(marker);
+        m_watchdogMarker.clear();
+        return;
+    }
+    appendLog(QStringLiteral("看门狗已启动（PID %1），异常退出后会自动重启控制台").arg(watchdogPid));
+#endif
+}
+
+void ConsumerWindow::stopWatchdog(){
+    // 删除 marker 是告诉看门狗“本次是正常退出”，它不会再拉起控制台。
+    if(m_watchdogMarker.isEmpty())return;
+    QFile::remove(m_watchdogMarker);
+    m_watchdogMarker.clear();
+}
+

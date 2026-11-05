@@ -52,6 +52,7 @@ set(MINISRC
     "${CMAKE_CURRENT_BINARY_DIR}/DeviceIdentity.h"
     src/FrameParser.h    src/FrameParser.cpp
     src/StatusWindow.h   src/StatusWindow.cpp
+    src/ZWaveformWidget.h src/ZWaveformWidget.cpp
     src/AppConfig.h      src/AppConfig.cpp
     src/CallManage.h     src/CallManage.cpp
     src/HttpMgr.h        src/HttpMgr.cpp

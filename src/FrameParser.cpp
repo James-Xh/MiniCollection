@@ -137,6 +137,10 @@ bool FrameParser::parseLanFrame(int stationId, const QByteArray& data)
 	QVector<float> vecX; vecX.reserve(256 * CHANNEL_COUNT);
 	QVector<float> vecY; vecY.reserve(256 * CHANNEL_COUNT);
 	QVector<float> vecComp(CHANNEL_COUNT, 0.0f);   // 每通道三分量标志(1=三分量)
+	// 显示用无效点标为 NaN，避免把离线通道的补零当作有效波形。
+	QVector<float> preview;
+	if (stationId == 0)
+		preview.fill(std::numeric_limits<float>::quiet_NaN(), 256 * CHANNEL_COUNT);
 
 	// ---------- 遍历256个采样点 ----------
 	for (int i = 0; i < 256; ++i) {
@@ -204,6 +208,8 @@ bool FrameParser::parseLanFrame(int stationId, const QByteArray& data)
 			}
 
 			vecDt.append(static_cast<float>(zRaw));
+			if (stationId == 0)
+				preview[i * CHANNEL_COUNT + ch] = static_cast<float>(zRaw);
 			vecX.append(static_cast<float>(xRaw));
 			vecY.append(static_cast<float>(yRaw));
 
@@ -216,6 +222,19 @@ bool FrameParser::parseLanFrame(int stationId, const QByteArray& data)
 		}
 	}
 
+	if (stationId == 0) {
+		int channel = -1;
+		for (int ch = 0; ch < CHANNEL_COUNT && channel < 0; ++ch)
+			for (int i = 0; i < 256; ++i)
+				if (!qIsNaN(preview[i * CHANNEL_COUNT + ch])) { channel = ch; break; }
+		QVector<float> samples;
+		if (channel >= 0) {
+			samples.reserve(256);
+			for (int i = 0; i < 256; ++i)
+				samples.append(preview[i * CHANNEL_COUNT + channel]);
+		}
+		emit zWaveform(channel, samples);
+	}
 	forwardData(ntag, vecDt, vecX, vecY, vecComp, frameStartUs);
 	return true;
 }
@@ -301,6 +320,13 @@ bool FrameParser::parseCloudNodeFrame(int stationId, const QByteArray& data)
 	}
 
 	forwardData(stationId, z, x, y, components, frameStartUs);
+	if (stationId == 0) {
+		QVector<float> samples;
+		samples.reserve(kCloudSampleCount);
+		for (int i = 0; i < kCloudSampleCount; ++i)
+			samples.append(z[i * CHANNEL_COUNT]);
+		emit zWaveform(0, samples);
+	}
 
 	const QString deviceId = QString::fromLatin1(
 		reinterpret_cast<const char*>(raw + 2), 8).trimmed();

@@ -7,6 +7,7 @@
 #include "LogManage.h"
 #include "MseedUploader.h"
 #include "DeviceIdentity.h"
+#include "ZWaveformWidget.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -16,6 +17,7 @@
 #include <QDateTime>
 #include <QCheckBox>
 #include <QSettings>
+#include <QSplitter>
 #include <cstring>
 
 StatusWindow::StatusWindow(QWidget* parent)
@@ -46,11 +48,11 @@ StatusWindow::StatusWindow(QWidget* parent)
 	header->setSectionResizeMode(QHeaderView::Fixed);
 	header->setSectionResizeMode(5, QHeaderView::Stretch);
 	header->setFixedHeight(46);
-	m_table->setColumnWidth(0, 80);
-	m_table->setColumnWidth(1, 220);
-	m_table->setColumnWidth(2, 120);
-	m_table->setColumnWidth(3, 130);
-	m_table->setColumnWidth(4, 90);
+	m_table->setColumnWidth(0, 50);
+	m_table->setColumnWidth(1, 150);
+	m_table->setColumnWidth(2, 80);
+	m_table->setColumnWidth(3, 80);
+	m_table->setColumnWidth(4, 50);
 
 	m_syncLabel = new QLabel(QStringLiteral("设备编号: %1    同步状态: 等待数据")
 		.arg(DeviceIdentity::id()), this);
@@ -76,7 +78,19 @@ StatusWindow::StatusWindow(QWidget* parent)
 	QVBoxLayout* mainLayout = new QVBoxLayout(this);
 	mainLayout->setContentsMargins(16, 16, 16, 16);
 	mainLayout->setSpacing(12);
-	mainLayout->addWidget(tableBox, 3);
+	QGroupBox* waveformBox = new QGroupBox(QStringLiteral("实时Z轴波形"), this);
+	QVBoxLayout* waveformLay = new QVBoxLayout(waveformBox);
+	waveformLay->setContentsMargins(8, 4, 8, 8);
+	m_waveform = new ZWaveformWidget(waveformBox);
+	waveformLay->addWidget(m_waveform);
+	QSplitter* topSplit = new QSplitter(Qt::Horizontal, this);
+	topSplit->setChildrenCollapsible(false);
+	topSplit->addWidget(tableBox);
+	topSplit->addWidget(waveformBox);
+	topSplit->setStretchFactor(0, 1);
+	topSplit->setStretchFactor(1, 1);
+	topSplit->setSizes({560, 560});
+	mainLayout->addWidget(topSplit, 3);
 	mainLayout->addWidget(m_syncLabel, 0);
 
 	// ---- mseed 网络上传设置（picker 目录生成 mseed 后自动上传，支持断点续传）----
@@ -204,6 +218,8 @@ int StatusWindow::stationRow(int stationId)
 }
 void StatusWindow::onStationConnectStatus(int stationId, bool connected)
 {
+	if (stationId == 0 && !connected)
+		m_waveform->clear();
 	const int row = stationRow(stationId);
 	if (row < 0) return;
 	m_table->item(row, 2)->setText(connected
@@ -212,6 +228,11 @@ void StatusWindow::onStationConnectStatus(int stationId, bool connected)
 	if (stationId >= 0 && stationId < MAX_STATION)
 		m_online[stationId] = 0;
 	m_table->item(row, 3)->setText("0/" + QString::number(CHANNEL_COUNT));
+}
+
+void StatusWindow::showZWaveform(int channel, const QVector<float>& samples)
+{
+	m_waveform->showFrame(channel, samples);
 }
 
 void StatusWindow::onDevStatus(int stationId, int channel, int state, int typeBit)

@@ -26,6 +26,10 @@ public:
 public slots:
     void onTcpData(int stationId, const QByteArray& data);
 
+signals:
+    // 仅设备端调试显示：站0首个有效通道，当前帧替换上一帧。
+    void zWaveform(int channel, const QVector<float>& samples);
+
 private:
     bool parseLanFrame(int stationId, const QByteArray& data);
     bool parseCloudNodeFrame(int stationId, const QByteArray& data);

@@ -51,7 +51,7 @@ static void ensureDefaultParams()
 }
 
 // 精简版采集程序入口：
-// 无登录/无波形/无用户管理/无样式资源，仅保留：
+// 无登录/无用户管理/无样式资源，提供单通道Z轴调试波形，保留：
 //   TCP数据接收 -> 帧解析 -> 跨站同步 -> STALTA计算 -> 事件mseed -> 文件分发
 int main(int argc, char* argv[])
 {
@@ -128,6 +128,8 @@ int main(int argc, char* argv[])
 	// 精简界面：站点/通道在线状态 + 同步状态 + 最简参数设置
 	StatusWindow window;
 	window.setPickder(pickder);
+	// parser 与窗口同属主线程，直接交付当前帧，不新增波形队列。
+	QObject::connect(parser, &FrameParser::zWaveform, &window, &StatusWindow::showZWaveform);
 	window.showMaximized();
 
 	// 启动所有站点连接（精简版无登录流程）

@@ -24,7 +24,7 @@ struct Metrics {
     int title;
 };
 
-inline QString makeSheet(const Metrics& m)
+inline QString makeSheet(const Metrics& m, int border = 1)
 {
     QString qss = QStringLiteral(R"QSS(
 QWidget {
@@ -45,7 +45,7 @@ QLabel:disabled {
 }
 QLabel#syncLabel {
     background-color: #ffffff;
-    border: 2px solid #8fa0b8;
+    border: @BORDER@px solid #8fa0b8;
     border-radius: 8px;
     padding: 8px 12px;
     font-size: @BASE@px;
@@ -54,9 +54,9 @@ QLabel#syncLabel {
 }
 QGroupBox {
     background-color: #ffffff;
-    border: 2px solid #8fa0b8;
+    border: @BORDER@px solid #8fa0b8;
     border-radius: 10px;
-    margin-top: 26px;
+    margin-top: 28px;
     padding: 6px 10px 10px 10px;
     font-weight: 600;
     color: #282b36;
@@ -74,7 +74,7 @@ QGroupBox::title {
 }
 QLineEdit, QSpinBox, QDoubleSpinBox {
     background-color: #ffffff;
-    border: 2px solid #8fa0b8;
+    border: @BORDER@px solid #8fa0b8;
     border-radius: 6px;
     padding: 6px 10px;
     min-height: @INPUTH@px;
@@ -87,7 +87,7 @@ QLineEdit:hover, QSpinBox:hover, QDoubleSpinBox:hover {
     border-color: #1c6ef2;
 }
 QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus {
-    border: 2px solid #1c6ef2;
+    border: @BORDER@px solid #1c6ef2;
     background-color: #ffffff;
 }
 QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled {
@@ -141,7 +141,7 @@ QCheckBox {
 QTableWidget, QTableView {
     background-color: #ffffff;
     alternate-background-color: #fafbfd;
-    border: 2px solid #8fa0b8;
+    border: @BORDER@px solid #8fa0b8;
     border-radius: 8px;
     gridline-color: #dfe3ea;
     color: #282b36;
@@ -162,7 +162,7 @@ QHeaderView::section {
     color: #282b36;
     border: none;
     border-right: 1px solid #d5dae3;
-    border-bottom: 2px solid #8fa0b8;
+    border-bottom: @BORDER@px solid #8fa0b8;
     padding: 10px 8px;
     font-size: @HEADER@px;
     font-weight: bold;
@@ -173,7 +173,7 @@ QTableCornerButton::section {
 }
 QListWidget {
     background-color: #ffffff;
-    border: 2px solid #8fa0b8;
+    border: @BORDER@px solid #8fa0b8;
     border-radius: 8px;
     padding: 6px;
     color: #282b36;
@@ -191,7 +191,7 @@ QListWidget::item:selected {
     color: #1c6ef2;
 }
 QTabWidget::pane {
-    border: 2px solid #8fa0b8;
+    border: @BORDER@px solid #8fa0b8;
     border-radius: 8px;
     background-color: #ffffff;
     top: -1px;
@@ -217,7 +217,7 @@ QTabBar::tab:selected {
 }
 QPlainTextEdit, QTextEdit {
     background-color: #ffffff;
-    border: 2px solid #8fa0b8;
+    border: @BORDER@px solid #8fa0b8;
     border-radius: 8px;
     padding: 6px;
     color: #282b36;
@@ -280,6 +280,7 @@ QToolTip {
 }
 )QSS");
 
+    qss.replace("@BORDER@", QString::number(border));
     qss.replace("@BASE@", QString::number(m.base));
     qss.replace("@TABLE@", QString::number(m.table));
     qss.replace("@HEADER@", QString::number(m.header));
@@ -295,13 +296,13 @@ QToolTip {
 // Acquisition device: larger fonts and touch-friendly controls.
 inline QString deviceSheet()
 {
-    return makeSheet(Metrics{16, 16, 15, 16, 40, 16, 42, 14, 18});
+    return makeSheet(Metrics{16, 16, 15, 16, 40, 16, 42, 14, 18}, 2);
 }
 
-// Console: denser layout, but same visual language.
+// Console: 1px borders and slightly larger text for desktop readability.
 inline QString consoleSheet()
 {
-    return makeSheet(Metrics{13, 14, 14, 14, 32, 14, 34, 12, 14});
+    return makeSheet(Metrics{14, 15, 15, 15, 36, 15, 38, 13, 15}, 1);
 }
 
 } // namespace UiStyle

@@ -9,6 +9,9 @@
 #include <QLabel>
 #include <QPushButton>
 #include "Commdef.h"
+#include <QVector>
+
+class ZWaveformWidget;
 
 // 精简版原生界面：
 //  - 表格显示每个已配置站的连接状态、在线通道数、GPS、数据同步状态
@@ -20,6 +23,7 @@ class StatusWindow : public QWidget
 public:
     explicit StatusWindow(QWidget* parent = nullptr);
     void setPickder(QObject* pickder);
+    void showZWaveform(int channel, const QVector<float>& samples);
 
 private slots:
     void onStationConnectStatus(int stationId, bool connected);
@@ -41,6 +45,7 @@ private:
     QTableWidget* m_table = nullptr;
     QPlainTextEdit* m_log = nullptr;
     QLabel* m_syncLabel = nullptr;
+    ZWaveformWidget* m_waveform = nullptr;
     // 每站在线通道计数（替代函数内 static，断线时可正确重置）
     int m_online[MAX_STATION];
     QObject* m_pickder = nullptr;   // MDataPickder（跨线程）

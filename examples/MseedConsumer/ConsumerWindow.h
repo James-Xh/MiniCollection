@@ -8,19 +8,31 @@
 class QLabel; class QLineEdit; class QListWidget; class QNetworkAccessManager;
 class QNetworkReply; class QPlainTextEdit; class QPushButton; class QSpinBox;
 class QTableWidget; class QTimer; class MseedConsumer; class QJsonObject;
+class QCloseEvent; class QDialog; class QSystemTrayIcon; class QAction;
 class ConsumerWindow : public QMainWindow
 {
     Q_OBJECT
 public:
     explicit ConsumerWindow(QWidget* parent = nullptr);
     ~ConsumerWindow() override;
+protected:
+    void closeEvent(QCloseEvent* event) override;
 private slots:
     void saveSettings(); void startConsumer(); void stopConsumer();
     void appendLog(const QString& message); void refreshDevices();
     void addDevice(); void removeDevice(); void onDeviceSelected();
     void submitParameters();
+    void showServerSettings();
+    void quitFromTray();
 private:
-    void loadSettings(); void createDefaultConfig() const;
+    void loadSettings(); void loadServerSettings(); void saveServerSettings();
+    void createDefaultConfig() const;
+    void createServerSettingsDialog();
+    void createTrayIcon();
+    void showMainWindow();
+    void startWatchdog(); void stopWatchdog();
+    void applyHeartbeatInterval();
+    int heartbeatSeconds() const;
     QString absoluteConfigPath(const QString& value) const;
     QString selectedDeviceId() const; QString apiUrl(const QString& path) const;
     QByteArray controlToken() const;
@@ -47,9 +59,16 @@ private:
     bool m_statusLogValid = false;
     bool m_projectInfoLoaded = false;
     bool m_projectInfoRequestActive = false;
+    bool m_quitRequested = false;                        // 从托盘“退出”时才真正关闭
+    bool m_trayHintShown = false;
+    QString m_watchdogMarker;                            // 非空表示看门狗正在守护
+    QDialog* m_serverDialog = nullptr;
+    QSystemTrayIcon* m_tray = nullptr;
+    QAction* m_trayShowAction = nullptr;
+    QAction* m_trayQuitAction = nullptr;
     QNetworkAccessManager* m_network = nullptr; QTimer* m_refreshTimer = nullptr;
     QLineEdit *m_serverEdit=nullptr,*m_tokenEdit=nullptr,*m_outputEdit=nullptr,*m_stateEdit=nullptr;
-    QSpinBox* m_intervalSpin=nullptr; QListWidget* m_deviceList=nullptr;
+    QSpinBox *m_intervalSpin=nullptr,*m_heartbeatSpin=nullptr; QListWidget* m_deviceList=nullptr;
     QLabel *m_deviceStatus=nullptr,*m_deviceIp=nullptr,*m_programVersion=nullptr,*m_configVersion=nullptr;
     QLabel *m_lastSeen=nullptr,*m_stationHint=nullptr;
     QTableWidget* m_stationTable=nullptr; QMap<QString,QLineEdit*> m_parameterEdits;

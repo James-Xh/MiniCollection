@@ -1,6 +1,6 @@
 # MiniCollection — 精简版微震数据采集程序
 
-从 CollectionSystem 项目中提取核心功能逻辑，去掉复杂界面、波形显示、用户管理、
+从 CollectionSystem 项目中提取核心功能逻辑，去掉复杂界面、多通道波形管理、用户管理、
 CAN 管理、系统设置等模块，仅保留最小数据链路：
 
 ```
@@ -16,6 +16,7 @@ HttpMgr: 计算窗口JSON上传(可配)
 - 样式集中在 `src/UiStyle.h`，设备端字号更大，参数表单为两列
 - 表格：每站 连接状态 / 在线通道数 / GPS / 最近事件
 - 同步状态行（等待数据 / 同步正常 / 同步异常 + 最大时间差）
+- 站台1首个有效通道的 Z 轴实时调试波形（仅当前帧，不累积历史）
 - 算法参数：tri_on / tri_off / nsta / nlta / detect_ch / qualified_ch /
   energy_thre / amp_thre / intrach / interch（写入 Config.ini [Para] 并即时生效）
 - 滚动日志
@@ -61,6 +62,6 @@ energy_thre=0.25, amp_thre=0.25, intrach=100, interch=250, calc_win_len=2500`。
 
 ## 与原项目的差异
 - 无登录流程，程序启动即连接所有站点并开始采集
-- 无波形绘制（qcustomplot 等未引入），在线状态用表格显示
+- 设备端显示站台1首个有效通道的 Z 轴当前帧波形（原始值、自动缩放），仅供调试；每帧替换，无历史缓存、上传或操作按钮，断线或 3 秒无数据后清空。使用 Qt 自带绘制，不引入 qcustomplot。
 - 分量模式固定为"自动"（按数据帧内类型位解析单/三分量）
 - 不含 CAN 管理、看门狗、备份机同步、用户/角色管理

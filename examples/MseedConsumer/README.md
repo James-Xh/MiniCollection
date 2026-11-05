@@ -22,11 +22,13 @@ build-windows-x64.bat
 输出目录：
 
 ```text
-dist-win64\MseedConsumer.exe
+dist-win64\地面微震采集控制台.exe
+dist-win64\MseedConsumerWatchdog.exe
 ```
 
 脚本会调用 `windeployqt`，因此 `dist-win64` 内已经包含运行所需的 Qt DLL，可以复制到其他
-Windows x64 机器运行。
+Windows x64 机器运行。`MseedConsumerWatchdog.exe` 必须与“地面微震采集控制台.exe”放在同一目录，
+控制台异常退出时由它自动重新启动。
 
 也可以手动构建：
 
@@ -36,9 +38,10 @@ cmake -S . -B build-win64 -G "Visual Studio 16 2019" -A x64 ^
 cmake --build build-win64 --config Release
 
 mkdir dist-win64
-copy build-win64\Release\MseedConsumer.exe dist-win64\
+copy "build-win64\Release\地面微震采集控制台.exe" dist-win64\
+copy "build-win64\Release\MseedConsumerWatchdog.exe" dist-win64\
 C:\Qt\5.15.2\msvc2019_64\bin\windeployqt.exe --release --no-translations ^
-  dist-win64\MseedConsumer.exe
+  "dist-win64\地面微震采集控制台.exe"
 ```
 
 ## 配置
@@ -49,6 +52,7 @@ C:\Qt\5.15.2\msvc2019_64\bin\windeployqt.exe --release --no-translations ^
 [Server]
 url=http://39.96.41.239:443
 downloadToken=你的MSEED_DOWNLOAD_TOKEN
+heartbeatSeconds=30
 
 [Consumer]
 pollSeconds=5
@@ -60,8 +64,13 @@ stateFile=data/state/cursor.txt
 ; 01=D:\mseed\device01
 ```
 
-相对路径以 `MseedConsumer.exe` 所在目录为基准。程序启动后自动按 `pollSeconds` 轮询，
-也可以在界面修改配置并点击“保存”和“启动”。
+相对路径以“地面微震采集控制台.exe”所在目录为基准。程序启动后自动按 `heartbeatSeconds` 刷新设备列表和状态，
+按 `pollSeconds` 轮询 mseed 数据，也可以在“服务器参数设置”弹窗中修改这些参数。
+
+“服务器参数设置”位于“刷新设备”按钮同一行的最右侧，点击后弹窗修改服务器地址、下载令牌、游标根目录、
+数据轮询间隔和心跳/刷新间隔。心跳间隔默认 30 秒，可在 5~3600 秒之间调整，用于降低控制台对服务器的请求频率。
+
+点击窗口关闭按钮只会最小化到任务栏托盘；需要从托盘菜单选择“退出控制台”才会彻底退出。
 
 “mseed消费”页的“设备保存目录”就是该设备的**确切保存目录**。为保证路径有效，该字段为只读，
 点击“浏览...”选择电脑上的任意目录。目录选到哪里，mseed 就保存到哪里，不会再自动追加设备编号。
@@ -85,7 +94,7 @@ stateFile=data/state/cursor.txt
 
 ```bat
 cd /d D:\MseedConsumer\dist-win64
-MseedConsumer.exe
+地面微震采集控制台.exe
 ```
 
 不要删除 `stateFile` 指向的 `cursor.txt`，否则程序会从 ID 0 重新消费。业务处理代码应添加在
