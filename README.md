@@ -28,8 +28,9 @@ cmake -B build -G "Visual Studio 16 2019" -A Win32 ^
 cmake --build build --config Release
 ```
 产物：`MiniCollection.exe`（主程序）+ `MiniWatchdog.exe`（看门狗）。
-部署时两者放在同一目录。依赖：Qt 5.15 (Core/Gui/Widgets/Network/Sql/SerialPort)、
-libmseed（复用 `../thirdpartyLib/mseed`）。
+部署时两者放在同一目录。依赖：Qt 5.15 (Core/Gui/Widgets/Network/Sql)、
+libmseed（复用 `../thirdpartyLib/mseed`）。Windows 电池采集额外使用 Qt SerialPort；
+EG628 Linux 使用 POSIX termios，不需要 Qt5SerialPort。
 
 EG628 AArch64 的交叉编译、增量更新部署和 systemd 开机启动步骤见
 [`docs/EG628-Linux部署操作手册.md`](docs/EG628-Linux部署操作手册.md)。

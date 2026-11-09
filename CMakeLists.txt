@@ -18,7 +18,13 @@ set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
-find_package(Qt5 REQUIRED COMPONENTS Core Gui Widgets Network Sql SerialPort)
+if(WIN32)
+    # Windows 开发环境使用 Qt SerialPort；EG628 Linux 端使用 termios，
+    # 不要求目标 sysroot 安装 Qt5SerialPort。
+    find_package(Qt5 REQUIRED COMPONENTS Core Gui Widgets Network Sql SerialPort)
+else()
+    find_package(Qt5 REQUIRED COMPONENTS Core Gui Widgets Network Sql)
+endif()
 
 if(CMAKE_CROSSCOMPILING AND QT_HOST_MOC)
     set_target_properties(Qt5::moc PROPERTIES
@@ -87,9 +93,13 @@ if(MSVC)
 endif()
 
 target_link_libraries(MiniCollection PRIVATE
-    Qt5::Core Qt5::Gui Qt5::Widgets Qt5::Network Qt5::Sql Qt5::SerialPort
+    Qt5::Core Qt5::Gui Qt5::Widgets Qt5::Network Qt5::Sql
     ${MSEED_LIB}
 )
+
+if(WIN32)
+    target_link_libraries(MiniCollection PRIVATE Qt5::SerialPort)
+endif()
 
 # Linux：libmseed.a 依赖 libm 的数学函数
 if(UNIX AND NOT APPLE)
