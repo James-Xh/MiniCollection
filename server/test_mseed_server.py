@@ -302,5 +302,85 @@ class MseedServerVersionTest(ServerTestBase):
         )
 
 
+class SensorSamplesTest(ServerTestBase):
+
+    def test_battery_samples_upload_latest_history_and_idempotency(self):
+        sample = {
+            "uid": "01-1720000000000-1-battery-main",
+            "ts": 1720000000000,
+            "sensor_type": "battery",
+            "sensor_id": "main",
+            "quality": "ok",
+            "metrics": {
+                "percent": 87.5,
+                "voltage": 12.4,
+                "current": 2.66,
+                "remaining_ah": 87.5,
+                "battery_temp": 25,
+                "load_current": 1.2,
+                "load_power": 15,
+                "solar_voltage": 18.0,
+                "solar_current": 2.66,
+                "charge_power": 45,
+                "fault_high": 0,
+                "fault_low": 0,
+            },
+        }
+
+        response = self.client.post(
+            "/coalmine/devices/01/sensors",
+            json={"samples": [sample]},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["accepted"], 1)
+
+        # The same uid is a retry, not a new sample.
+        response = self.client.post(
+            "/coalmine/devices/01/sensors",
+            json={"samples": [sample]},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["accepted"], 0)
+        self.assertEqual(response.json()["duplicated"], 1)
+
+        latest = self.client.get("/coalmine/devices/01/sensors/latest").json()
+        battery = latest["sensors"]["battery"]
+        self.assertAlmostEqual(battery["battery_percent"], 87.5)
+        self.assertAlmostEqual(battery["battery_voltage"], 12.4)
+        self.assertEqual(battery["metrics"]["battery_temp"], 25)
+
+        history = self.client.get(
+            "/coalmine/devices/01/sensors?after_id=0&limit=10"
+        ).json()
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["uid"], sample["uid"])
+
+        heartbeat = {
+            "program_running": True,
+            "program_version": "1.0.0",
+            "network_state": "online",
+            "local_ip": "192.168.111.2",
+            "applied_config_version": 0,
+            "sensors": {
+                "battery": {
+                    "ts": 1720000000000,
+                    "quality": "ok",
+                    "percent": 87.5,
+                    "voltage": 12.4,
+                    "current": 2.66,
+                }
+            },
+            "stations": [],
+        }
+        self.assertEqual(
+            self.client.post("/coalmine/devices/01/heartbeat", json=heartbeat).status_code,
+            200,
+        )
+        device = self.client.get("/coalmine/devices/01").json()
+        self.assertAlmostEqual(
+            device["status"]["sensors"]["battery"]["percent"], 87.5
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

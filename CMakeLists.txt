@@ -18,7 +18,7 @@ set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
-find_package(Qt5 REQUIRED COMPONENTS Core Gui Widgets Network Sql)
+find_package(Qt5 REQUIRED COMPONENTS Core Gui Widgets Network Sql SerialPort)
 
 if(CMAKE_CROSSCOMPILING AND QT_HOST_MOC)
     set_target_properties(Qt5::moc PROPERTIES
@@ -66,6 +66,8 @@ set(MINISRC
     src/MseedFileHandler.h src/MseedFileHandler.cpp
     src/MseedUploader.h  src/MseedUploader.cpp
     src/DeviceSyncAgent.h src/DeviceSyncAgent.cpp
+    src/ModbusRtuClient.h src/ModbusRtuClient.cpp
+    src/BatteryService.h  src/BatteryService.cpp
     src/NetworkReplyTimeout.h
     src/picker.h         src/picker.cpp
     src/is_compliant_event.h
@@ -85,7 +87,7 @@ if(MSVC)
 endif()
 
 target_link_libraries(MiniCollection PRIVATE
-    Qt5::Core Qt5::Gui Qt5::Widgets Qt5::Network Qt5::Sql
+    Qt5::Core Qt5::Gui Qt5::Widgets Qt5::Network Qt5::Sql Qt5::SerialPort
     ${MSEED_LIB}
 )
 
@@ -103,6 +105,13 @@ if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8)
     add_custom_command(TARGET MiniCollection POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${MSEED_DIR}/libs/libopenblas.dll" $<TARGET_FILE_DIR:MiniCollection>)
+endif()
+
+if(WIN32)
+    # 电池采集使用 Qt SerialPort；把运行库随程序输出，避免现场缺 DLL。
+    add_custom_command(TARGET MiniCollection POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:Qt5::SerialPort>" $<TARGET_FILE_DIR:MiniCollection>)
 endif()
 
 # ---------- 看门狗（独立小进程，守护 MiniCollection.exe） ----------

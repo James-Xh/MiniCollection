@@ -28,7 +28,7 @@ cmake -B build -G "Visual Studio 16 2019" -A Win32 ^
 cmake --build build --config Release
 ```
 产物：`MiniCollection.exe`（主程序）+ `MiniWatchdog.exe`（看门狗）。
-部署时两者放在同一目录。依赖：Qt 5.15 (Core/Gui/Widgets/Network/Sql)、
+部署时两者放在同一目录。依赖：Qt 5.15 (Core/Gui/Widgets/Network/Sql/SerialPort)、
 libmseed（复用 `../thirdpartyLib/mseed`）。
 
 EG628 AArch64 的交叉编译、增量更新部署和 systemd 开机启动步骤见
@@ -36,6 +36,9 @@ EG628 AArch64 的交叉编译、增量更新部署和 systemd 开机启动步骤
 
 mseed 分片上传、断点续传、服务器部署和无重复消费接口见
 [`docs/Mseed服务器部署与接口协议.md`](docs/Mseed服务器部署与接口协议.md)。
+
+电池控制器 RS485（Modbus RTU）接入、寄存器说明和控制台显示见
+[`docs/电池模块RS485接入说明.md`](docs/电池模块RS485接入说明.md)。
 
 多项目（多控制台）隔离部署：每个项目在服务器上运行一个独立服务进程、使用独立数据目录和独立
 上传/下载令牌；控制台和设备只连接自己项目的地址。用 `server/add-project.sh <项目名> <公网端口>`

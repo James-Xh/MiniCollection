@@ -3,6 +3,7 @@
 
 #include <QObject>
 #include <QMap>
+#include <QVariantMap>
 #include <QVector>
 
 class MDataPickder;
@@ -16,6 +17,9 @@ class DeviceSyncAgent : public QObject
 public:
     explicit DeviceSyncAgent(MDataPickder* pickder, QObject* parent = nullptr);
     void start();
+
+public slots:
+    void onBatterySnapshot(const QVariantMap& snapshot);
 
 private slots:
     void fetchConfiguration();
@@ -48,6 +52,7 @@ private:
     QTimer* m_heartbeatTimer = nullptr;
     QTimer* m_applyTimer = nullptr;
     QMap<int, StationState> m_stations;
+    QVariantMap m_batterySnapshot;
     int m_appliedVersion = 0;
     int m_pendingVersion = 0;
     bool m_configRequestActive = false;

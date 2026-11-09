@@ -40,7 +40,7 @@ MAX_CHUNK_SIZE = 2 * 1024 * 1024
 LEGACY_DEVICE_ID = "01"
 
 logger = logging.getLogger("mseed_server")
-app = FastAPI(title="MiniCollection mseed server", version="2.1.0")
+app = FastAPI(title="MiniCollection mseed server", version="2.2.0")
 write_lock = threading.Lock()
 
 
@@ -82,6 +82,7 @@ class DeviceHeartbeat(BaseModel):
     network_state: str = ""
     local_ip: str = ""
     applied_config_version: int = 0
+    sensors: dict = Field(default_factory=dict)
     stations: list[StationStatus] = Field(default_factory=list)
 
 
@@ -89,6 +90,19 @@ class ConfigAppliedRequest(BaseModel):
     version: int
     success: bool = True
     message: str = ""
+
+
+class SensorSample(BaseModel):
+    uid: str
+    ts: int
+    sensor_type: str
+    sensor_id: str = ""
+    quality: str = "ok"
+    metrics: dict = Field(default_factory=dict)
+
+
+class SensorBatch(BaseModel):
+    samples: list[SensorSample] = Field(default_factory=list)
 
 
 def safe_name(raw_name: str) -> str:
@@ -232,6 +246,42 @@ def init_storage() -> None:
             """INSERT OR IGNORE INTO devices(device_id)
                SELECT DISTINCT device_id FROM files"""
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sensor_samples (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                device_id TEXT NOT NULL,
+                uid TEXT NOT NULL,
+                ts_ms INTEGER NOT NULL,
+                sensor_type TEXT NOT NULL,
+                sensor_id TEXT NOT NULL DEFAULT '',
+                battery_percent REAL,
+                battery_voltage REAL,
+                battery_current REAL,
+                battery_remaining_ah REAL,
+                battery_temp REAL,
+                load_current REAL,
+                load_power REAL,
+                solar_voltage REAL,
+                solar_current REAL,
+                charge_power REAL,
+                fault_high INTEGER NOT NULL DEFAULT 0,
+                fault_low INTEGER NOT NULL DEFAULT 0,
+                metrics_json TEXT NOT NULL DEFAULT '{}',
+                quality TEXT NOT NULL DEFAULT 'ok',
+                received_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(device_id, uid)
+            )
+            """
+        )
+        conn.execute(
+            """CREATE INDEX IF NOT EXISTS idx_sensor_device_ts
+               ON sensor_samples(device_id, ts_ms)"""
+        )
+        conn.execute(
+            """CREATE INDEX IF NOT EXISTS idx_sensor_device_type_id
+               ON sensor_samples(device_id, sensor_type, id)"""
+        )
 
     # Upgrade the legacy flat layout after the database transaction succeeds.
     legacy_files = [path for path in FILE_DIR.iterdir() if path.is_file()]
@@ -324,6 +374,12 @@ def device_payload(row: sqlite3.Row) -> dict:
         "desired_config_version": row["desired_config_version"],
         "status": status,
     }
+
+
+def sensor_payload(row: sqlite3.Row) -> dict:
+    data = dict(row)
+    data["metrics"] = json.loads(data.pop("metrics_json") or "{}")
+    return data
 
 
 DEVICE_SELECT = """
@@ -501,6 +557,112 @@ def report_config_applied(device_id: str, payload: ConfigAppliedRequest,
                 (payload.version, identity),
             )
     return {"device_id": identity, "version": payload.version, "status": status}
+
+
+@app.post("/coalmine/devices/{device_id}/sensors")
+def upload_sensor_samples(device_id: str, payload: SensorBatch, request: Request):
+    """Device uploads low-frequency sensor samples in batches.
+
+    Samples are idempotent by (device_id, uid): a retry after a timeout or a
+    network failure will not create duplicate history rows.
+    """
+    require_project_token(request.headers.get("x-project-token"))
+    identity = safe_device_id(device_id)
+    accepted = 0
+
+    with write_lock, database() as conn:
+        ensure_device(conn, identity)
+        for sample in payload.samples:
+            if not sample.uid.strip() or not sample.sensor_type.strip():
+                continue
+            metrics = sample.metrics or {}
+            cursor = conn.execute(
+                """INSERT OR IGNORE INTO sensor_samples
+                   (device_id, uid, ts_ms, sensor_type, sensor_id,
+                    battery_percent, battery_voltage, battery_current,
+                    battery_remaining_ah, battery_temp, load_current,
+                    load_power, solar_voltage, solar_current, charge_power,
+                    fault_high, fault_low, metrics_json, quality)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    identity,
+                    sample.uid.strip(),
+                    sample.ts,
+                    sample.sensor_type.strip(),
+                    sample.sensor_id.strip(),
+                    metrics.get("percent"),
+                    metrics.get("voltage"),
+                    metrics.get("current"),
+                    metrics.get("remaining_ah"),
+                    metrics.get("battery_temp"),
+                    metrics.get("load_current"),
+                    metrics.get("load_power"),
+                    metrics.get("solar_voltage"),
+                    metrics.get("solar_current"),
+                    metrics.get("charge_power"),
+                    int(metrics.get("fault_high") or 0),
+                    int(metrics.get("fault_low") or 0),
+                    json.dumps(metrics),
+                    sample.quality or "ok",
+                ),
+            )
+            accepted += max(cursor.rowcount, 0)
+
+    return {
+        "device_id": identity,
+        "accepted": accepted,
+        "duplicated": max(0, len(payload.samples) - accepted),
+    }
+
+
+@app.get("/coalmine/devices/{device_id}/sensors/latest")
+def latest_sensor_samples(device_id: str,
+                          x_project_token: str | None = Header(default=None)):
+    require_project_token(x_project_token)
+    identity = safe_device_id(device_id)
+    with database() as conn:
+        rows = conn.execute(
+            """SELECT s.* FROM sensor_samples s
+               JOIN (SELECT sensor_type, MAX(id) AS max_id
+                     FROM sensor_samples
+                     WHERE device_id = ?
+                     GROUP BY sensor_type) latest
+                 ON s.id = latest.max_id
+               WHERE s.device_id = ?""",
+            (identity, identity),
+        ).fetchall()
+    return {
+        "device_id": identity,
+        "sensors": {row["sensor_type"]: sensor_payload(row) for row in rows},
+    }
+
+
+@app.get("/coalmine/devices/{device_id}/sensors")
+def list_sensor_samples(
+    device_id: str,
+    after_id: int = Query(0, ge=0),
+    from_ts: int | None = Query(default=None, ge=0),
+    to_ts: int | None = Query(default=None, ge=0),
+    limit: int = Query(500, ge=1, le=2000),
+    x_project_token: str | None = Header(default=None),
+):
+    require_project_token(x_project_token)
+    identity = safe_device_id(device_id)
+
+    sql = "SELECT * FROM sensor_samples WHERE device_id = ? AND id > ?"
+    params: list = [identity, after_id]
+    if from_ts is not None:
+        sql += " AND ts_ms >= ?"
+        params.append(from_ts)
+    if to_ts is not None:
+        sql += " AND ts_ms <= ?"
+        params.append(to_ts)
+    sql += " ORDER BY id ASC LIMIT ?"
+    params.append(limit)
+
+    with database() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [sensor_payload(row) for row in rows]
 
 
 @app.post("/coalmine/devices/{device_id}/heartbeat")

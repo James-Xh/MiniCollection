@@ -596,3 +596,31 @@ sudo nginx -t && sudo systemctl reload nginx
 
 服务端仍使用单 worker（分片写入锁为进程内锁）。多项目通过多进程隔离，不要给单个项目增加
 `--workers`。
+
+## 十二、电池/传感器数据接口
+
+设备端电池控制器通过 RS485 Modbus RTU 采集，详细接线和寄存器说明见
+[`电池模块RS485接入说明.md`](电池模块RS485接入说明.md)。
+
+设备批量上传：
+
+```http
+POST /coalmine/devices/{device_id}/sensors
+X-Project-Token: <设备上传令牌>
+Content-Type: application/json
+
+{"samples":[{"uid":"01-1720000000000-1-battery-main","ts":1720000000000,"sensor_type":"battery","sensor_id":"main","quality":"ok","metrics":{"percent":55,"voltage":12.3,"current":2.66}}]}
+```
+
+服务端按 `(device_id, uid)` 去重，重复上传不会产生重复历史。
+
+控制台查询：
+
+```text
+GET /coalmine/devices/{device_id}/sensors/latest
+GET /coalmine/devices/{device_id}/sensors?after_id=0&limit=500
+GET /coalmine/devices/{device_id}/sensors?from_ts=...&to_ts=...
+```
+
+设备心跳的 `sensors` 字段保存最新快照，控制台设备状态页直接读取
+`status.sensors.battery`。历史数据保存在 SQLite `sensor_samples` 表。

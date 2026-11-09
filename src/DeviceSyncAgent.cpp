@@ -202,6 +202,11 @@ void DeviceSyncAgent::sendHeartbeat()
         {"network_state", m_networkOnline ? "online" : "unknown"},
         {"local_ip", localAddress()}, {"applied_config_version", m_appliedVersion},
         {"stations", stations}};
+    if (!m_batterySnapshot.isEmpty()) {
+        QJsonObject sensors;
+        sensors.insert("battery", QJsonObject::fromVariantMap(m_batterySnapshot));
+        body.insert("sensors", sensors);
+    }
     QNetworkRequest request(QUrl(endpoint("/heartbeat")));
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
     addProjectToken(request);
@@ -237,6 +242,11 @@ void DeviceSyncAgent::onGpsStatus(int stationId, int gps)
     StationState& state = m_stations[stationId];
     if (state.channels.isEmpty()) state.channels.fill(false, CHANNEL_COUNT);
     state.gps = gps;
+}
+
+void DeviceSyncAgent::onBatterySnapshot(const QVariantMap& snapshot)
+{
+    m_batterySnapshot = snapshot;
 }
 
 QString DeviceSyncAgent::localAddress() const

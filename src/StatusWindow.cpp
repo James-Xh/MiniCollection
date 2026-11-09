@@ -60,6 +60,10 @@ StatusWindow::StatusWindow(QWidget* parent)
 	m_syncLabel->setWordWrap(true);
 	m_syncLabel->setMinimumHeight(48);
 
+	m_batteryLabel = new QLabel(QStringLiteral("电池: 等待数据"), this);
+	m_batteryLabel->setWordWrap(true);
+	m_batteryLabel->setMinimumHeight(32);
+
 	m_log = new QPlainTextEdit(this);
 	m_log->setReadOnly(true);
 	m_log->setMaximumBlockCount(500);
@@ -92,6 +96,7 @@ StatusWindow::StatusWindow(QWidget* parent)
 	topSplit->setSizes({560, 560});
 	mainLayout->addWidget(topSplit, 3);
 	mainLayout->addWidget(m_syncLabel, 0);
+	mainLayout->addWidget(m_batteryLabel, 0);
 
 	// ---- mseed 网络上传设置（picker 目录生成 mseed 后自动上传，支持断点续传）----
 	QGroupBox* uploadBox = new QGroupBox(QStringLiteral("mseed网络上传"), this);
@@ -269,6 +274,41 @@ void StatusWindow::onPickerSyncStatus(int state, qint64 maxDiffUs,
 	m_syncLabel->setText(QStringLiteral("设备编号: %1    同步状态: %2 (最大时间差 %3 ms) - %4")
 		.arg(DeviceIdentity::id()).arg(stateStr)
 		.arg(maxDiffUs / 1000.0, 0, 'f', 1).arg(message));
+}
+
+void StatusWindow::onBatterySnapshot(const QVariantMap& snapshot)
+{
+    const QString quality = snapshot.value("quality").toString();
+    if (quality != "ok") {
+        m_batteryLabel->setText(QStringLiteral("电池: 通讯异常 - %1")
+            .arg(snapshot.value("message").toString()));
+        m_batteryLabel->setStyleSheet(QStringLiteral("color:#c0392b;"));
+        return;
+    }
+
+    const double percent = snapshot.value("percent").toDouble();
+    const double voltage = snapshot.value("voltage").toDouble();
+    const double chargeCurrent = snapshot.value("charge_current").toDouble();
+    const double loadCurrent = snapshot.value("load_current").toDouble();
+    const int batteryTemp = snapshot.value("battery_temp").toInt();
+    const bool hasFault = snapshot.value("has_fault").toBool();
+
+    QString text = QStringLiteral("电池: %1%  %2V  充电 %3A  负载 %4A  电池温度 %5℃")
+        .arg(percent, 0, 'f', 0)
+        .arg(voltage, 0, 'f', 1)
+        .arg(chargeCurrent, 0, 'f', 2)
+        .arg(loadCurrent, 0, 'f', 2)
+        .arg(batteryTemp);
+    if (hasFault)
+        text += QStringLiteral("  [故障]");
+
+    m_batteryLabel->setText(text);
+    if (hasFault || percent < 20)
+        m_batteryLabel->setStyleSheet(QStringLiteral("color:#c0392b;"));
+    else if (percent < 50)
+        m_batteryLabel->setStyleSheet(QStringLiteral("color:#d68910;"));
+    else
+        m_batteryLabel->setStyleSheet(QStringLiteral("color:#1e8449;"));
 }
 
 void StatusWindow::onPickerNewFile(const QString& file)

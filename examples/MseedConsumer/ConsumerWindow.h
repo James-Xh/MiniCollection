@@ -71,6 +71,7 @@ private:
     QSpinBox *m_intervalSpin=nullptr,*m_heartbeatSpin=nullptr; QListWidget* m_deviceList=nullptr;
     QLabel *m_deviceStatus=nullptr,*m_deviceIp=nullptr,*m_programVersion=nullptr,*m_configVersion=nullptr;
     QLabel *m_lastSeen=nullptr,*m_stationHint=nullptr;
+    QLabel* m_batteryLabel=nullptr;
     QTableWidget* m_stationTable=nullptr; QMap<QString,QLineEdit*> m_parameterEdits;
     QLineEdit* m_uploadUrlEdit=nullptr; QLabel *m_statusLabel=nullptr,*m_cursorLabel=nullptr,*m_lastFileLabel=nullptr;
     QPlainTextEdit* m_logEdit=nullptr; QPushButton *m_saveButton=nullptr,*m_startButton=nullptr,*m_stopButton=nullptr;

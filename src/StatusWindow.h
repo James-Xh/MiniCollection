@@ -10,6 +10,7 @@
 #include <QPushButton>
 #include "Commdef.h"
 #include <QVector>
+#include <QVariantMap>
 
 class ZWaveformWidget;
 
@@ -24,6 +25,9 @@ public:
     explicit StatusWindow(QWidget* parent = nullptr);
     void setPickder(QObject* pickder);
     void showZWaveform(int channel, const QVector<float>& samples);
+
+public slots:
+    void onBatterySnapshot(const QVariantMap& snapshot);
 
 private slots:
     void onStationConnectStatus(int stationId, bool connected);
@@ -45,6 +49,7 @@ private:
     QTableWidget* m_table = nullptr;
     QPlainTextEdit* m_log = nullptr;
     QLabel* m_syncLabel = nullptr;
+    QLabel* m_batteryLabel = nullptr;
     ZWaveformWidget* m_waveform = nullptr;
     // 每站在线通道计数（替代函数内 static，断线时可正确重置）
     int m_online[MAX_STATION];

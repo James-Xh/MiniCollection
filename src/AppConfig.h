@@ -74,6 +74,9 @@ public:
     QString getPickerPath();
 
     QString getBinsPath();
+
+    // 传感器本地缓存目录（电池等），带结尾斜杠。
+    QString getSensorPath();
 signals:
 
 private:

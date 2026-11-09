@@ -12,6 +12,7 @@
 #include "MDataWriter.h"
 #include "MseedFileHandler.h"
 #include "MseedUploader.h"
+#include "BatteryService.h"
 #include "StatusWindow.h"
 #include "UiStyle.h"
 #include "DeviceIdentity.h"
@@ -132,6 +133,18 @@ int main(int argc, char* argv[])
 	QObject::connect(parser, &FrameParser::zWaveform, &window, &StatusWindow::showZWaveform);
 	window.showMaximized();
 
+	// 电池控制器采集（RS485 Modbus RTU）：独立线程读取串口、缓存并上传。
+	BatteryService* battery = new BatteryService();
+	QThread* batteryThread = new QThread(&a);
+	battery->moveToThread(batteryThread);
+	QObject::connect(batteryThread, &QThread::started, battery, &BatteryService::start);
+	QObject::connect(batteryThread, &QThread::finished, battery, &BatteryService::deleteLater);
+	QObject::connect(battery, &BatteryService::batterySnapshot,
+		deviceSync, &DeviceSyncAgent::onBatterySnapshot, Qt::QueuedConnection);
+	QObject::connect(battery, &BatteryService::batterySnapshot,
+		&window, &StatusWindow::onBatterySnapshot, Qt::QueuedConnection);
+	batteryThread->start();
+
 	// 启动所有站点连接（精简版无登录流程）
 	tcpMgr->startAll();
 
@@ -144,6 +157,7 @@ int main(int argc, char* argv[])
 	// 1) 让 worker 在各自线程中停止内部定时器/文件句柄（阻塞等待执行完成）
 	QMetaObject::invokeMethod(writer, "stopWrite", Qt::BlockingQueuedConnection);
 	QMetaObject::invokeMethod(mseedHandler, "stop", Qt::BlockingQueuedConnection);
+	QMetaObject::invokeMethod(battery, "stop", Qt::BlockingQueuedConnection);
 	// 2) 退出各线程事件循环并等待结束
 	auto stopThread = [](QThread* t) {
 		if (t && t->isRunning()) {
@@ -155,6 +169,7 @@ int main(int argc, char* argv[])
 	stopThread(writerThread);
 	stopThread(pickderThread);
 	stopThread(mseedThread);
+	stopThread(batteryThread);
 
 	return ret;
 }

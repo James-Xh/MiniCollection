@@ -108,8 +108,8 @@ ConsumerWindow::ConsumerWindow(QWidget* parent) : QMainWindow(parent),
     dc->addWidget(add);dc->addWidget(remove);ll->addLayout(dc); split->addWidget(left);
     QTabWidget* tabs=new QTabWidget(split);
     QWidget* statusPage=new QWidget(tabs); QVBoxLayout* sl=new QVBoxLayout(statusPage); QFormLayout* df=new QFormLayout;
-    m_deviceStatus=new QLabel("-",statusPage);m_deviceIp=new QLabel("-",statusPage);m_programVersion=new QLabel("-",statusPage);m_configVersion=new QLabel("-",statusPage);m_lastSeen=new QLabel("-",statusPage);
-    df->addRow(QStringLiteral("设备状态"),m_deviceStatus);df->addRow(QStringLiteral("最后心跳"),m_lastSeen);df->addRow(QStringLiteral("设备IP"),m_deviceIp);df->addRow(QStringLiteral("程序版本"),m_programVersion);df->addRow(QStringLiteral("配置版本"),m_configVersion);sl->addLayout(df);
+    m_deviceStatus=new QLabel("-",statusPage);m_deviceIp=new QLabel("-",statusPage);m_programVersion=new QLabel("-",statusPage);m_configVersion=new QLabel("-",statusPage);m_lastSeen=new QLabel("-",statusPage);m_batteryLabel=new QLabel("-",statusPage);m_batteryLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    df->addRow(QStringLiteral("设备状态"),m_deviceStatus);df->addRow(QStringLiteral("最后心跳"),m_lastSeen);df->addRow(QStringLiteral("设备IP"),m_deviceIp);df->addRow(QStringLiteral("程序版本"),m_programVersion);df->addRow(QStringLiteral("配置版本"),m_configVersion);df->addRow(QStringLiteral("电池"),m_batteryLabel);sl->addLayout(df);
     m_stationHint=new QLabel(QString(),statusPage);m_stationHint->setWordWrap(true);m_stationHint->setStyleSheet(QStringLiteral("color:#8a5a00;"));sl->addWidget(m_stationHint);
     m_stationTable=new QTableWidget(statusPage);m_stationTable->setColumnCount(6);m_stationTable->setHorizontalHeaderLabels({QStringLiteral("站号"),QStringLiteral("IP:PORT"),QStringLiteral("连接"),QStringLiteral("在线通道"),QStringLiteral("总通道"),QStringLiteral("GPS")});m_stationTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);m_stationTable->setEditTriggers(QAbstractItemView::NoEditTriggers);sl->addWidget(m_stationTable);tabs->addTab(statusPage,QStringLiteral("设备状态"));
     QWidget* parameterPage=new QWidget(tabs);QGridLayout* pf=new QGridLayout(parameterPage);
@@ -431,6 +431,36 @@ void ConsumerWindow::showDevice(const QJsonObject& o){
     const QDateTime lastSeen=deviceUtcTime(o.value("last_seen_at").toString());
     const QString age=relativeAge(lastSeen);
     const QJsonObject status=o.value("status").toObject();
+    const QJsonObject sensors=status.value("sensors").toObject();
+    const QJsonObject battery=sensors.value("battery").toObject();
+    if(battery.isEmpty()){
+        m_batteryLabel->setText(QStringLiteral("-"));
+        m_batteryLabel->setStyleSheet(QString());
+    }else if(battery.value("quality").toString()!="ok"){
+        m_batteryLabel->setText(QStringLiteral("通讯异常：%1").arg(battery.value("message").toString(QStringLiteral("无有效数据"))));
+        m_batteryLabel->setStyleSheet(QStringLiteral("color:#c0392b;"));
+    }else{
+        const double percent=battery.value("percent").toDouble();
+        const double voltage=battery.value("voltage").toDouble();
+        const double chargeCurrent=battery.value("current").toDouble();
+        const double loadCurrent=battery.value("load_current").toDouble();
+        const double remainingAh=battery.value("remaining_ah").toDouble();
+        const int batteryTemp=battery.value("battery_temp").toInt();
+        const bool hasFault=battery.value("has_fault").toBool();
+        QString text=QStringLiteral("%1%  %2V  充电 %3A  负载 %4A  剩余 %5Ah  电池 %6℃")
+            .arg(percent,0,'f',0)
+            .arg(voltage,0,'f',1)
+            .arg(chargeCurrent,0,'f',2)
+            .arg(loadCurrent,0,'f',2)
+            .arg(remainingAh,0,'f',1)
+            .arg(batteryTemp);
+        if(hasFault)text+=QStringLiteral("  [故障]");
+        if(!online)text+=QStringLiteral("  （离线快照）");
+        m_batteryLabel->setText(text);
+        if(hasFault||percent<20)m_batteryLabel->setStyleSheet(QStringLiteral("color:#c0392b;"));
+        else if(percent<50)m_batteryLabel->setStyleSheet(QStringLiteral("color:#d68910;"));
+        else m_batteryLabel->setStyleSheet(QStringLiteral("color:#1e8449;"));
+    }
     m_deviceStatus->setText(online?QStringLiteral("在线"):QStringLiteral("离线"));
     m_lastSeen->setText(lastSeen.isValid()?QStringLiteral("%1（%2）").arg(lastSeen.toLocalTime().toString("yyyy-MM-dd HH:mm:ss"),age):QStringLiteral("无心跳记录"));
     m_deviceIp->setText(o.value("remote_ip").toString()+" / "+status.value("local_ip").toString());

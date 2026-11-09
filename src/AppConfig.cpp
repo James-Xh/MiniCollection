@@ -78,6 +78,7 @@ void AppConfig::initDirs()
 	createUnexistDir(getTempPickerPath());      //算法拾取到的临时
     createUnexistDir(getPickerPath());      //算法拾取到的
     createUnexistDir(getBinsPath());        //连续存储路径
+    createUnexistDir(getSensorPath());      //传感器本地缓存
 
 	// 首次运行时补齐默认配置；已有值始终保留，便于现场覆盖。
 	if (!m_pSetting->contains("/BackupMachine/ip"))
@@ -98,6 +99,38 @@ void AppConfig::initDirs()
 		m_pSetting->setValue("/Upload/pollSec", 5);
 	if (!m_pSetting->contains("/Upload/token"))
 		m_pSetting->setValue("/Upload/token", "");
+
+	// 电池控制器 RS485 采集默认值。现场只需要按实际接线修改 port/slave。
+	if (!m_pSetting->contains("/Battery/enabled"))
+		m_pSetting->setValue("/Battery/enabled", 1);
+	if (!m_pSetting->contains("/Battery/mock"))
+		m_pSetting->setValue("/Battery/mock", 0);
+	if (!m_pSetting->contains("/Battery/port"))
+		m_pSetting->setValue("/Battery/port", "/dev/ttyS1");
+	if (!m_pSetting->contains("/Battery/baud"))
+		m_pSetting->setValue("/Battery/baud", 9600);
+	if (!m_pSetting->contains("/Battery/parity"))
+		m_pSetting->setValue("/Battery/parity", "N");
+	if (!m_pSetting->contains("/Battery/dataBits"))
+		m_pSetting->setValue("/Battery/dataBits", 8);
+	if (!m_pSetting->contains("/Battery/stopBits"))
+		m_pSetting->setValue("/Battery/stopBits", 1);
+	if (!m_pSetting->contains("/Battery/slave"))
+		m_pSetting->setValue("/Battery/slave", 1);
+	if (!m_pSetting->contains("/Battery/pollSec"))
+		m_pSetting->setValue("/Battery/pollSec", 10);
+	if (!m_pSetting->contains("/Battery/uploadSec"))
+		m_pSetting->setValue("/Battery/uploadSec", 60);
+	if (!m_pSetting->contains("/Battery/nominalCapacityAh"))
+		m_pSetting->setValue("/Battery/nominalCapacityAh", 0);
+	if (!m_pSetting->contains("/Battery/initialSoc"))
+		m_pSetting->setValue("/Battery/initialSoc", 80);
+	if (!m_pSetting->contains("/Battery/ocvCurve"))
+		m_pSetting->setValue("/Battery/ocvCurve",
+			"11.8:0,12.0:20,12.2:40,12.4:60,12.6:80,12.8:100");
+
+	// 让工作线程里的独立 QSettings 能立即读到新补的默认项。
+	m_pSetting->sync();
 }
 
 void AppConfig::createUnexistDir(const QString &path)
@@ -125,4 +158,9 @@ QString AppConfig::getPickerPath()
 QString AppConfig::getBinsPath()
 {
     return AppConfigPath() + "/data/bins/";
+}
+
+QString AppConfig::getSensorPath()
+{
+    return AppConfigPath() + "/data/sensors/";
 }
