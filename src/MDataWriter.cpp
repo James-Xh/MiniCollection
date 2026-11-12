@@ -42,6 +42,11 @@ bool MDataWriter::initialize()
 {
 	QMutexLocker locker(&m_mutex);
 
+	// Config/datacompletion=0 时不再写 data/bins 连续原始数据。
+	// 键不存在时保持原有行为（默认开启），避免老现场升级后突然停止写盘。
+	const QVariant enabled = APPCfg->getConfig("Config", "datacompletion");
+	m_enabled = !enabled.isValid() || enabled.toInt() != 0;
+
 	m_sampleRate = 500;
 
 	if (!m_pHeader)
@@ -54,6 +59,13 @@ bool MDataWriter::initialize()
 	m_initialized = true;
 	m_buffer.clear();
 	m_sampleCount = 0;
+
+	if (!m_enabled) {
+		LOGMgr->addLog("MDataWriter",
+			QStringLiteral("连续原始数据写入已禁用（Config/datacompletion=0），"
+				"不会创建 data/bins 文件"));
+		return true;
+	}
 
 	// 缓冲区固定为10秒（采样率500Hz × 10秒 = 5000样本），
 	// 不再从配置读取（Para/differen 已改用于拾取同步容差）。
@@ -82,6 +94,9 @@ QString MDataWriter::getNewFileName()
 
 void MDataWriter::addData(const QVector<float>& values)
 {
+	if (!m_enabled)
+		return;
+
 	{
 		QMutexLocker locker(&m_mutex);
 		if (!m_initialized) {
@@ -119,6 +134,9 @@ Q_INVOKABLE void MDataWriter::startRead(QString strFile)
 
 void MDataWriter::startWrite()
 {
+	if (!m_enabled)
+		return;
+
 	QMutexLocker locker(&m_mutex);
 
 	if (!m_initialized) {
@@ -304,6 +322,9 @@ void MDataWriter::onReadTimeout()
 
 void MDataWriter::createFile()
 {
+	if (!m_enabled)
+		return;
+
 	QString today = getNewFileName();
 	if (today != m_strCurrentDate) {
 		updateFileName();
@@ -359,6 +380,9 @@ void MDataWriter::readTestFile()
 
 bool MDataWriter::writeToFile()
 {
+	if (!m_enabled)
+		return true;
+
 	QMutexLocker locker(&m_mutex);
 
 	if (m_buffer.isEmpty()) {

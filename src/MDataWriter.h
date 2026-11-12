@@ -108,6 +108,7 @@ private:
 	int64_t m_sampleCount;
 	bool m_initialized;
 	bool m_isWriting;
+	bool m_enabled = true;   // Config/datacompletion=0 时关闭 data/bins 连续写盘
 };
 
 #endif // MDataWriter_H

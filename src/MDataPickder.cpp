@@ -8,6 +8,7 @@
 #include "AppConfig.h"
 #include "CallManage.h"
 #include <QFile>
+#include <QFileInfo>
 #include <QTextStream>
 #include <QDateTime>
 #include <limits>
@@ -734,9 +735,26 @@ Q_INVOKABLE void MDataPickder::applyRemoteParameters(QVariantMap parameters, int
 	for (auto it = parameters.constBegin(); it != parameters.constEnd(); ++it)
 		settings.setValue("Para/" + it.key(), it.value());
 	settings.sync();
+
+	// 某些嵌入式文件系统不支持 QSettings 默认的原子重命名；失败后关闭
+	// 原子写入再重试一次。权限不足或磁盘满时第二次仍会失败。
 	if (settings.status() != QSettings::NoError) {
-		emit remoteParametersApplied(version, false,
-			QStringLiteral("Config.ini 写入失败"));
+		settings.setAtomicSyncRequired(false);
+		settings.sync();
+	}
+
+	if (settings.status() != QSettings::NoError) {
+		const QString file = settings.fileName();
+		const QFileInfo info(file);
+		const QFileInfo dirInfo(info.absolutePath());
+		const QString detail = QStringLiteral(
+			"Config.ini 写入失败：status=%1，file=%2，writable=%3，dirWritable=%4")
+			.arg(int(settings.status()))
+			.arg(file)
+			.arg(info.isWritable() ? "true" : "false")
+			.arg(dirInfo.isWritable() ? "true" : "false");
+		emit CallManage::getInstance()->sig_addLog("Parameters", detail);
+		emit remoteParametersApplied(version, false, detail);
 		return;
 	}
 

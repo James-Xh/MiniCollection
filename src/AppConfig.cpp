@@ -100,6 +100,10 @@ void AppConfig::initDirs()
 	if (!m_pSetting->contains("/Upload/token"))
 		m_pSetting->setValue("/Upload/token", "");
 
+	// 连续原始数据写入开关：0 关闭 data/bins，默认保持开启。
+	if (!m_pSetting->contains("/Config/datacompletion"))
+		m_pSetting->setValue("/Config/datacompletion", 1);
+
 	// 电池控制器 RS485 采集默认值。现场只需要按实际接线修改 port/slave。
 	if (!m_pSetting->contains("/Battery/enabled"))
 		m_pSetting->setValue("/Battery/enabled", 1);
