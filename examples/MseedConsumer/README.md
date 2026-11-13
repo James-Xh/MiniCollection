@@ -59,13 +59,58 @@ pollSeconds=5
 outputDir=data/mseed
 stateFile=data/state/cursor.txt
 
+[Log]
+; 控制台日志目录，相对路径以控制台程序目录为基准
+dir=Log
+; 日志保留天数
+keepDays=30
+
+[BatteryAlarm]
+; 电池告警开关
+enabled=1
+; SOC 低告警 / 严重告警阈值（%）
+lowPercent=20
+criticalPercent=10
+; 电压低告警 / 严重告警阈值（V）
+; 12V 系统用 11.8/11.2；24V 系统改成 23.6/22.4；48V 改成 47.2/44.8
+lowVoltage=11.8
+criticalVoltage=11.2
+; 同一告警重复提示间隔（分钟）
+repeatMinutes=30
+
 [DeviceDirs]
 ; 可选：为每台设备指定确切的保存目录
 ; 01=D:\mseed\device01
+
+[DeviceNames]
+; 可选：设备编号到界面显示名称的映射
+; 01=一区
+; 02=二区
 ```
+
+`[DeviceNames]` 只影响控制台左侧设备列表的显示，例如：
+
+```ini
+[DeviceNames]
+01=一区
+02=二区
+```
+
+界面会显示为：
+
+```text
+一区  在线
+二区  离线
+```
+
+未配置映射时，优先显示服务器返回的设备名称；服务器名称也为空时显示设备编号。
 
 相对路径以“地面微震采集控制台.exe”所在目录为基准。程序启动后自动按 `heartbeatSeconds` 刷新设备列表和状态，
 按 `pollSeconds` 轮询 mseed 数据，也可以在“服务器参数设置”弹窗中修改这些参数。
+
+控制台会把所有日志写入 `Log/console_YYYY-MM-DD.log`，并按 `Log/keepDays` 清理旧日志。
+电池状态会定期写入日志；出现低电量、低电压、控制器故障或通讯异常时，会写 `[电池告警]`，
+同时通过托盘通知提示用户，严重告警会弹出对话框。
 
 设备状态页会显示心跳中的电池信息（SOC、电压、充电电流、负载电流、剩余 Ah、电池温度）；
 设备离线时显示最后一次心跳的快照。

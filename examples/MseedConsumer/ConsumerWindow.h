@@ -26,6 +26,7 @@ private slots:
     void quitFromTray();
 private:
     void loadSettings(); void loadServerSettings(); void saveServerSettings();
+    void loadDeviceNames();
     void createDefaultConfig() const;
     void createServerSettingsDialog();
     void createTrayIcon();
@@ -42,6 +43,14 @@ private:
     void setRunning(bool running); void showDevice(const QJsonObject& object);
     void handleNetworkError(const QString& operation, QNetworkReply* reply);
     void appendLogThrottled(const QString& message);
+    void initLogFile();
+    void cleanupOldLogs();
+    void writeLogFile(const QString& line);
+    void logBatteryStatus(const QString& deviceId, const QJsonObject& battery, bool online);
+    void checkBatteryAlarm(const QString& deviceId, const QJsonObject& battery);
+    QString batterySummary(const QJsonObject& battery, bool online) const;
+    QString batteryAlarmText(const QJsonObject& battery) const;
+    int batteryAlarmLevel(const QJsonObject& battery) const;
     QString m_configPath; std::unique_ptr<MseedConsumer> m_consumer;
     QString m_consumingDeviceId;
     QString m_lastErrorKey; qint64 m_lastErrorMs = 0;   // 相同网络错误 20 秒内不重复刷屏
@@ -54,6 +63,20 @@ private:
     bool m_manualRefreshRequested = false;               // 手动点击刷新
     QString m_lastSelectedLogId;                         // 已记录过选择的设备
     QString m_outputDirDeviceId;                         // 保存目录当前对应的设备
+    QMap<QString, QString> m_deviceNames;                 // 设备编号 -> 显示名称
+    QString m_logDir;                                    // 控制台日志目录
+    int m_logKeepDays = 30;
+    QString m_lastBatteryLogKey;
+    qint64 m_lastBatteryLogMs = 0;
+    QString m_batteryAlarmDevice;
+    int m_batteryAlarmLevel = 0;
+    qint64 m_lastBatteryAlarmMs = 0;
+    bool m_batteryAlarmEnabled = true;
+    int m_batteryLowPercent = 20;
+    int m_batteryCriticalPercent = 10;
+    double m_batteryLowVoltage = 11.8;
+    double m_batteryCriticalVoltage = 11.2;
+    int m_batteryAlarmRepeatMinutes = 30;
     QString m_statusLogDeviceId;                         // 设备状态日志对应设备
     bool m_statusLogOnline = false;
     bool m_statusLogValid = false;

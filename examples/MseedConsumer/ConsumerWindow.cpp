@@ -6,6 +6,7 @@
 #include <QCloseEvent>
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QDate>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
@@ -142,7 +143,7 @@ ConsumerWindow::ConsumerWindow(QWidget* parent) : QMainWindow(parent),
     QHBoxLayout* outputLay=new QHBoxLayout;outputLay->setContentsMargins(0,0,0,0);outputLay->addWidget(m_outputEdit,1);outputLay->addWidget(browse);
     m_statusLabel=new QLabel(QStringLiteral("未启动"),filesPage);m_cursorLabel=new QLabel("0",filesPage);m_lastFileLabel=new QLabel("-",filesPage);m_lastFileLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
     ff->addRow(QStringLiteral("设备保存目录"),outputLay);
-    ff->addRow(QStringLiteral("数据获取状态"),m_statusLabel);ff->addRow(QStringLiteral("已确认游标"),m_cursorLabel);ff->addRow(QStringLiteral("最近文件"),m_lastFileLabel);tabs->addTab(filesPage,QStringLiteral("mseed消费"));
+    ff->addRow(QStringLiteral("数据获取状态"),m_statusLabel);ff->addRow(QStringLiteral("已确认游标"),m_cursorLabel);ff->addRow(QStringLiteral("最近文件"),m_lastFileLabel);tabs->addTab(filesPage,QStringLiteral("mseed获取"));
     connect(browse,&QPushButton::clicked,this,[this](){
         const QString id=selectedDeviceId();
         if(id.isEmpty()){
@@ -163,7 +164,8 @@ ConsumerWindow::ConsumerWindow(QWidget* parent) : QMainWindow(parent),
     m_logEdit=new QPlainTextEdit(central);m_logEdit->setReadOnly(true);m_logEdit->setMaximumBlockCount(500);m_logEdit->setMinimumHeight(180);root->addWidget(m_logEdit,2);setCentralWidget(central);
 
     connect(m_saveButton,&QPushButton::clicked,this,&ConsumerWindow::saveSettings);connect(m_startButton,&QPushButton::clicked,this,&ConsumerWindow::startConsumer);connect(m_stopButton,&QPushButton::clicked,this,&ConsumerWindow::stopConsumer);connect(refresh,&QPushButton::clicked,this,[this](){m_manualRefreshRequested=true;refreshDevices();});connect(serverSettings,&QPushButton::clicked,this,&ConsumerWindow::showServerSettings);connect(add,&QPushButton::clicked,this,&ConsumerWindow::addDevice);connect(remove,&QPushButton::clicked,this,&ConsumerWindow::removeDevice);connect(m_deviceList,&QListWidget::itemSelectionChanged,this,&ConsumerWindow::onDeviceSelected);connect(submit,&QPushButton::clicked,this,&ConsumerWindow::submitParameters);connect(m_refreshTimer,&QTimer::timeout,this,&ConsumerWindow::refreshDevices);
-    createDefaultConfig();createServerSettingsDialog();loadSettings();setRunning(false);createTrayIcon();applyHeartbeatInterval();appendLog(QStringLiteral("采集控制台已启动，服务器地址：%1，心跳/刷新间隔 %2 秒").arg(m_serverEdit->text().trimmed().isEmpty()?QStringLiteral("<空>"):m_serverEdit->text().trimmed()).arg(heartbeatSeconds()));refreshDevices();startWatchdog();
+    createDefaultConfig();createServerSettingsDialog();loadSettings();loadDeviceNames();initLogFile();setRunning(false);createTrayIcon();applyHeartbeatInterval();appendLog(QStringLiteral("采集控制台已启动，服务器地址：%1，心跳/刷新间隔 %2 秒，日志目录：%3").arg(m_serverEdit->text().trimmed().isEmpty()?QStringLiteral("<空>"):m_serverEdit->text().trimmed()).arg(heartbeatSeconds()).arg(QDir::toNativeSeparators(m_logDir)));refreshDevices();startWatchdog();
+    startConsumer();
 }
 ConsumerWindow::~ConsumerWindow(){
     if(m_consumer)m_consumer->stop();
@@ -181,6 +183,14 @@ void ConsumerWindow::createDefaultConfig() const{
     s.setValue("Consumer/pollSeconds",5);
     s.setValue("Consumer/outputDir","data/mseed");
     s.setValue("Consumer/stateFile","data/state");
+    s.setValue("Log/dir","Log");
+    s.setValue("Log/keepDays",30);
+    s.setValue("BatteryAlarm/enabled",1);
+    s.setValue("BatteryAlarm/lowPercent",20);
+    s.setValue("BatteryAlarm/criticalPercent",10);
+    s.setValue("BatteryAlarm/lowVoltage",11.8);
+    s.setValue("BatteryAlarm/criticalVoltage",11.2);
+    s.setValue("BatteryAlarm/repeatMinutes",30);
     s.sync();
 }
 
@@ -236,6 +246,23 @@ void ConsumerWindow::loadSettings(){
     m_outputEdit->clear();
     m_uploadUrlEdit->setText(m_serverEdit->text());
     m_outputDirDeviceId.clear();
+}
+
+void ConsumerWindow::loadDeviceNames(){
+    m_deviceNames.clear();
+    QSettings s(m_configPath,QSettings::IniFormat);
+    s.beginGroup(QStringLiteral("DeviceNames"));
+    const QStringList keys=s.childKeys();
+    for(const QString& key:keys){
+        QString name=s.value(key).toString().trimmed();
+        name.remove(QLatin1Char('"'));
+        name.remove(QChar(0x201C));
+        name.remove(QChar(0x201D));
+        name=name.trimmed();
+        if(!key.trimmed().isEmpty()&&!name.isEmpty())
+            m_deviceNames.insert(key.trimmed(),name);
+    }
+    s.endGroup();
 }
 
 int ConsumerWindow::heartbeatSeconds() const{
@@ -377,8 +404,12 @@ void ConsumerWindow::refreshDevices(){
                 ++deviceCount;
                 if(online)++onlineCount;
                 snapshot << id + (online?QStringLiteral(":1"):QStringLiteral(":0"));
-                QListWidgetItem* item=new QListWidgetItem(QStringLiteral("%1  %2").arg(id,online?QStringLiteral("在线"):QStringLiteral("离线")),m_deviceList);
+                QString displayName=m_deviceNames.value(id).trimmed();
+                if(displayName.isEmpty())displayName=o.value("name").toString().trimmed();
+                if(displayName.isEmpty())displayName=id;
+                QListWidgetItem* item=new QListWidgetItem(QStringLiteral("%1  %2").arg(displayName,online?QStringLiteral("在线"):QStringLiteral("离线")),m_deviceList);
                 item->setData(Qt::UserRole,id);
+                item->setToolTip(QStringLiteral("设备编号：%1").arg(id));
                 if(id==selected)m_deviceList->setCurrentItem(item);
             }
             if(!m_deviceList->currentItem()&&m_deviceList->count())m_deviceList->setCurrentRow(0);
@@ -428,6 +459,7 @@ void ConsumerWindow::onDeviceSelected(){
     if(m_consumer&&m_consumingDeviceId!=id){stopConsumer();startConsumer();}}
 void ConsumerWindow::showDevice(const QJsonObject& o){
     const bool online=o.value("online").toBool();
+    const QString deviceId=o.value("device_id").toString();
     const QDateTime lastSeen=deviceUtcTime(o.value("last_seen_at").toString());
     const QString age=relativeAge(lastSeen);
     const QJsonObject status=o.value("status").toObject();
@@ -442,25 +474,19 @@ void ConsumerWindow::showDevice(const QJsonObject& o){
     }else{
         const double percent=battery.value("percent").toDouble();
         const double voltage=battery.value("voltage").toDouble();
-        const double chargeCurrent=battery.value("current").toDouble();
-        const double loadCurrent=battery.value("load_current").toDouble();
-        const double remainingAh=battery.value("remaining_ah").toDouble();
-        const int batteryTemp=battery.value("battery_temp").toInt();
         const bool hasFault=battery.value("has_fault").toBool();
-        QString text=QStringLiteral("%1%  %2V  充电 %3A  负载 %4A  剩余 %5Ah  电池 %6℃")
-            .arg(percent,0,'f',0)
-            .arg(voltage,0,'f',1)
-            .arg(chargeCurrent,0,'f',2)
-            .arg(loadCurrent,0,'f',2)
-            .arg(remainingAh,0,'f',1)
-            .arg(batteryTemp);
-        if(hasFault)text+=QStringLiteral("  [故障]");
-        if(!online)text+=QStringLiteral("  （离线快照）");
+        QString text=batterySummary(battery,online);
+        const QString alarm=batteryAlarmText(battery);
+        if(!alarm.isEmpty())text+=QStringLiteral("  [%1]").arg(alarm);
         m_batteryLabel->setText(text);
-        if(hasFault||percent<20)m_batteryLabel->setStyleSheet(QStringLiteral("color:#c0392b;"));
-        else if(percent<50)m_batteryLabel->setStyleSheet(QStringLiteral("color:#d68910;"));
+        if(hasFault||percent<=m_batteryCriticalPercent||voltage<=m_batteryCriticalVoltage)
+            m_batteryLabel->setStyleSheet(QStringLiteral("color:#c0392b;"));
+        else if(percent<=m_batteryLowPercent||voltage<=m_batteryLowVoltage)
+            m_batteryLabel->setStyleSheet(QStringLiteral("color:#d68910;"));
         else m_batteryLabel->setStyleSheet(QStringLiteral("color:#1e8449;"));
     }
+    logBatteryStatus(deviceId,battery,online);
+    checkBatteryAlarm(deviceId,battery);
     m_deviceStatus->setText(online?QStringLiteral("在线"):QStringLiteral("离线"));
     m_lastSeen->setText(lastSeen.isValid()?QStringLiteral("%1（%2）").arg(lastSeen.toLocalTime().toString("yyyy-MM-dd HH:mm:ss"),age):QStringLiteral("无心跳记录"));
     m_deviceIp->setText(o.value("remote_ip").toString()+" / "+status.value("local_ip").toString());
@@ -468,7 +494,6 @@ void ConsumerWindow::showDevice(const QJsonObject& o){
     m_configVersion->setText(QStringLiteral("已应用 %1 / 期望 %2%3").arg(o.value("applied_config_version").toInt()).arg(o.value("desired_config_version").toInt()).arg(online?QString():QStringLiteral("（离线，上线后才会拉取）")));
     m_stationHint->setText(online?QString():QStringLiteral("设备离线：下表是最后一次心跳（%1）时的站点快照，不代表当前状态").arg(age));
     const QJsonArray stations=status.value("stations").toArray();
-    const QString deviceId=o.value("device_id").toString();
     int connectedStations=0;
     for(const QJsonValue& value:stations)
         if(value.toObject().value("connected").toBool())++connectedStations;
@@ -571,7 +596,162 @@ void ConsumerWindow::stopConsumer(){
     m_consumingDeviceId.clear();
     setRunning(false);
 }
-void ConsumerWindow::appendLog(const QString& m){m_logEdit->appendPlainText(QStringLiteral("[%1] %2").arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss"),m));}
+void ConsumerWindow::appendLog(const QString& m){
+    const QString line=QStringLiteral("[%1] %2")
+        .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss"),m);
+    m_logEdit->appendPlainText(line);
+    writeLogFile(line);
+}
+
+void ConsumerWindow::initLogFile(){
+    QSettings s(m_configPath,QSettings::IniFormat);
+    QString dir=s.value("Log/dir","Log").toString().trimmed();
+    if(dir.isEmpty())dir=QStringLiteral("Log");
+    m_logDir=absoluteConfigPath(dir);
+    m_logKeepDays=qMax(1,s.value("Log/keepDays",30).toInt());
+
+    m_batteryAlarmEnabled=s.value("BatteryAlarm/enabled",1).toInt()!=0;
+    m_batteryLowPercent=qBound(0,s.value("BatteryAlarm/lowPercent",20).toInt(),100);
+    m_batteryCriticalPercent=qBound(0,s.value("BatteryAlarm/criticalPercent",10).toInt(),m_batteryLowPercent);
+    m_batteryLowVoltage=qMax(0.0,s.value("BatteryAlarm/lowVoltage",11.8).toDouble());
+    m_batteryCriticalVoltage=qMax(0.0,s.value("BatteryAlarm/criticalVoltage",11.2).toDouble());
+    m_batteryAlarmRepeatMinutes=qMax(1,s.value("BatteryAlarm/repeatMinutes",30).toInt());
+
+    QDir().mkpath(m_logDir);
+    cleanupOldLogs();
+}
+
+void ConsumerWindow::cleanupOldLogs(){
+    if(m_logDir.isEmpty())return;
+    QDir dir(m_logDir);
+    const QDate today=QDate::currentDate();
+    const QFileInfoList files=dir.entryInfoList(QStringList()<<QStringLiteral("console_*.log"),QDir::Files);
+    for(const QFileInfo& fi:files){
+        if(fi.lastModified().date().daysTo(today)>m_logKeepDays)
+            QFile::remove(fi.absoluteFilePath());
+    }
+}
+
+void ConsumerWindow::writeLogFile(const QString& line){
+    if(m_logDir.isEmpty())return;
+    const QString path=QDir(m_logDir).filePath(
+        QStringLiteral("console_%1.log").arg(QDate::currentDate().toString("yyyy-MM-dd")));
+    QFile f(path);
+    if(!f.open(QIODevice::WriteOnly|QIODevice::Append|QIODevice::Text))return;
+    f.write(line.toUtf8());
+    f.write("\n");
+    f.close();
+}
+
+QString ConsumerWindow::batterySummary(const QJsonObject& battery,bool online)const{
+    if(battery.isEmpty())return QStringLiteral("无电池数据");
+    if(battery.value("quality").toString()!="ok")
+        return QStringLiteral("通讯异常：%1").arg(
+            battery.value("message").toString(QStringLiteral("无有效数据")));
+    QString text=QStringLiteral("%1%  %2V  充电 %3A  负载 %4A  剩余 %5Ah  电池 %6℃")
+        .arg(battery.value("percent").toDouble(),0,'f',0)
+        .arg(battery.value("voltage").toDouble(),0,'f',1)
+        .arg(battery.value("current").toDouble(),0,'f',2)
+        .arg(battery.value("load_current").toDouble(),0,'f',2)
+        .arg(battery.value("remaining_ah").toDouble(),0,'f',1)
+        .arg(battery.value("battery_temp").toInt());
+    if(battery.value("has_fault").toBool())text+=QStringLiteral("  控制器故障");
+    if(!online)text+=QStringLiteral("  （离线快照）");
+    return text;
+}
+
+QString ConsumerWindow::batteryAlarmText(const QJsonObject& battery)const{
+    if(battery.isEmpty())return QString();
+    if(battery.value("quality").toString()!="ok")
+        return QStringLiteral("电池通讯异常：%1").arg(
+            battery.value("message").toString(QStringLiteral("无有效数据")));
+    QStringList alarms;
+    const double percent=battery.value("percent").toDouble();
+    const double voltage=battery.value("voltage").toDouble();
+    if(battery.value("has_fault").toBool())alarms<<QStringLiteral("控制器故障");
+    if(percent<=m_batteryCriticalPercent)
+        alarms<<QStringLiteral("电量严重不足 %1%").arg(percent,0,'f',0);
+    else if(percent<=m_batteryLowPercent)
+        alarms<<QStringLiteral("电量低 %1%").arg(percent,0,'f',0);
+    if(voltage<=m_batteryCriticalVoltage)
+        alarms<<QStringLiteral("电压严重过低 %1V").arg(voltage,0,'f',1);
+    else if(voltage<=m_batteryLowVoltage)
+        alarms<<QStringLiteral("电压低 %1V").arg(voltage,0,'f',1);
+    return alarms.join(QStringLiteral("，"));
+}
+
+int ConsumerWindow::batteryAlarmLevel(const QJsonObject& battery)const{
+    if(battery.isEmpty())return 0;
+    if(battery.value("quality").toString()!="ok")return 3;
+    if(battery.value("has_fault").toBool())return 3;
+    const double percent=battery.value("percent").toDouble();
+    const double voltage=battery.value("voltage").toDouble();
+    if(percent<=m_batteryCriticalPercent||voltage<=m_batteryCriticalVoltage)return 2;
+    if(percent<=m_batteryLowPercent||voltage<=m_batteryLowVoltage)return 1;
+    return 0;
+}
+
+void ConsumerWindow::logBatteryStatus(const QString& deviceId,const QJsonObject& battery,bool online){
+    const QString summary=batterySummary(battery,online);
+    const QString key=QStringLiteral("%1|%2").arg(deviceId,summary);
+    const qint64 now=QDateTime::currentMSecsSinceEpoch();
+    if(key==m_lastBatteryLogKey&&now-m_lastBatteryLogMs<60000)return;
+    m_lastBatteryLogKey=key;
+    m_lastBatteryLogMs=now;
+    //appendLog(QStringLiteral("[电池] 设备 %1：%2").arg(deviceId,summary));
+}
+
+void ConsumerWindow::checkBatteryAlarm(const QString& deviceId,const QJsonObject& battery){
+    if(!m_batteryAlarmEnabled)return;
+    if(battery.isEmpty()){
+        if(m_batteryAlarmLevel>0)
+            appendLog(QStringLiteral("[电池] 设备 %1 电池数据不可用，告警状态清除").arg(deviceId));
+        m_batteryAlarmLevel=0;
+        return;
+    }
+    const int level=batteryAlarmLevel(battery);
+    const qint64 now=QDateTime::currentMSecsSinceEpoch();
+
+    if(deviceId!=m_batteryAlarmDevice){
+        m_batteryAlarmDevice=deviceId;
+        m_batteryAlarmLevel=0;
+        m_lastBatteryAlarmMs=0;
+    }
+
+    if(level==0){
+        if(m_batteryAlarmLevel>0){
+            appendLog(QStringLiteral("[电池] 设备 %1 电池状态恢复正常：%2")
+                .arg(deviceId,batterySummary(battery,true)));
+        }
+        m_batteryAlarmLevel=0;
+        return;
+    }
+
+    const bool escalated=level>m_batteryAlarmLevel;
+    const bool repeat=now-m_lastBatteryAlarmMs>=qint64(m_batteryAlarmRepeatMinutes)*60000;
+    if(!escalated&&!repeat){
+        if(level<m_batteryAlarmLevel)m_batteryAlarmLevel=level;
+        return;
+    }
+
+    m_batteryAlarmLevel=qMax(m_batteryAlarmLevel,level);
+    m_lastBatteryAlarmMs=now;
+
+    const QString alarm=batteryAlarmText(battery);
+    const QString summary=batterySummary(battery,true);
+    const QString title=QStringLiteral("电池告警 - 设备 %1").arg(deviceId);
+    const QString text=QStringLiteral("%1\n%2").arg(alarm,summary);
+    appendLog(QStringLiteral("[电池告警] 设备 %1：%2").arg(deviceId,text));
+
+    if(m_tray&&QSystemTrayIcon::isSystemTrayAvailable())
+        m_tray->showMessage(title,alarm,QSystemTrayIcon::Warning,10000);
+
+    if(level>=2)
+        QMessageBox::warning(this,title,text);
+    else
+        QApplication::alert(this,0);
+}
+
 QString ConsumerWindow::absoluteConfigPath(const QString& v)const{QFileInfo i(v);return i.isAbsolute()?i.absoluteFilePath():QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(v);}
 void ConsumerWindow::loadOutputDirForDevice(const QString& id){
     if(!m_outputEdit)return;
